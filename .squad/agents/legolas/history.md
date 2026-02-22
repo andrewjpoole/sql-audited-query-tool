@@ -105,3 +105,50 @@
 - **Key learning:** Avoid putting callback functions in useEffect dependencies unless they're stable via useCallback; prefer direct props over syncing state between parent/child with effects
 - **Build verified:** `npm run build` succeeds (74 modules, 231.52KB JS gzip 72.61KB)
 
+### 2026-02-23T10:00:00Z: Tabbed SQL Query Editor Implementation
+- **Feature:** Multi-file tabbed query editor using Monaco's native multi-model support
+- **Research finding:** Monaco Editor supports multiple models natively via the `path` prop — no custom tab management needed at Monaco level
+- **Key insight:** @monaco-editor/react v4.7.0 has built-in multi-model API — when you provide a `path` prop, Monaco automatically manages separate models with independent view states, undo stacks, scroll positions
+- **Component created:** `TabbedSqlEditor.tsx` + `.css` — replaces `SqlEditor.tsx` as main editor component
+- **Tab features:** 
+  - Create new tabs with "+" button
+  - Close tabs with "×" button (with dirty state warning)
+  - Switch tabs by clicking
+  - Rename tabs via double-click
+  - Dirty indicator (●) shows unsaved changes per tab
+  - At least one tab always open
+  - Each tab maintains independent Monaco model via unique `path` prop
+- **Monaco integration:** Uses `path={activeTab.path}` and `defaultValue={activeTab.defaultValue}` — Monaco handles model persistence automatically across tab switches
+- **State management:** `QueryTab` interface tracks `id`, `name`, `path`, `defaultValue`, `isDirty` per tab
+- **UX patterns:** Horizontal tab bar with scrollable overflow, active tab highlighted with accent border, hover states, close button appears on hover
+- **Context menus preserved:** All SQL helper actions (Insert Date, GUID, GETDATE, etc.) work on current active tab
+- **Styling:** Follows existing dark theme variables, compact 36px tab bar, smooth transitions, consistent with VS Code tab UI patterns
+- **Integration:** Updated `App.tsx` to use `TabbedSqlEditor` instead of `SqlEditor`; maintains same `SqlEditorHandle` ref interface for text insertion
+- **Key files:** `TabbedSqlEditor.tsx`, `TabbedSqlEditor.css`, `App.tsx` (import change)
+- **Build verified:** `npm run build` succeeds (75 modules, 233.47KB JS gzip 73.24KB)
+
+### 2026-02-23T12:00:00Z: Schema TreeView Icon Size Improvement
+- **Issue:** User feedback that icons in SchemaTreeView were too small/hard to see
+- **Root cause:** `.stv-icon` CSS class had `font-size: 13px` and `width: 18px` — too small for emoji icons in tree view
+- **Solution:** Increased icon sizing to `font-size: 18px` and `width: 20px` in `SchemaTreeView.css`
+- **Reasoning:** Tree view icons typically work best at 16-20px range; 18px provides good visibility while maintaining proportional layout
+- **Impact:** Icons (📁📋🔑📝📇🔗) are now clearly visible and appropriately sized for the tree hierarchy
+- **User preference:** Andrew prefers larger, more visible icons for better UX
+- **Key file:** `src/components/SchemaTreeView.css` line 116-121 (`.stv-icon` class)
+- **Build verified:** `npm run build` succeeds (75 modules, 233.47KB JS gzip 73.24KB)
+
+### 2026-02-23T14:00:00Z: Infinite Loop Bug Fix — Chat Session Creation
+- **Problem:** Chat sessions created uncontrollably in infinite loop when user asks a question
+- **Root cause:** In `App.tsx`, `chatHistory` object from `useChatHistory()` hook was used as dependency in `useCallback` hooks (lines 138-152). Since `chatHistory` is a new object on every render, the callback references changed on every render. This made `onUpdateSession` callback unstable, which triggered infinite re-renders in `ChatPanel` because `updateMessages` callback (line 70-74) had `onUpdateSession` in its dependency array.
+- **Infinite loop cycle:** App re-renders → new `chatHistory` object → new callback references → ChatPanel re-renders → new `updateMessages` callback → message update → unstable callback triggers App re-render → loop continues
+- **Solution:** Destructured individual stable functions from `useChatHistory()` hook (`createNewSession`, `loadSession`, `updateSession`, `deleteSession`) and used them directly as dependencies in `useCallback` hooks instead of the entire `chatHistory` object
+- **Key changes:** 
+  - Line 31-39: Changed from `const chatHistory = useChatHistory()` to destructured `const { sessions, currentSessionId, createNewSession, loadSession, updateSession, deleteSession } = useChatHistory()`
+  - Lines 138-152: Updated `useCallback` dependencies from `[chatHistory]` to specific function names like `[createNewSession]`, `[loadSession]`, etc.
+  - Lines 217-219: Changed props from `chatHistory.sessions` to `sessions`, `chatHistory.currentSessionId` to `currentSessionId`
+- **Key learning:** Never use entire hook return objects in `useCallback` dependencies — destructure and use individual stable references. Hook return objects are new on every render even if their contents are stable.
+- **Pattern to avoid:** `const hook = useHook(); useCallback(() => hook.method(), [hook])` ❌
+- **Pattern to use:** `const { method } = useHook(); useCallback(() => method(), [method])` ✅
+- **Build verified:** `npm run build` succeeds (75 modules, 233.46KB JS gzip 73.24KB)
+
+

@@ -23,6 +23,7 @@ var api = builder.AddProject<SqlAuditedQueryTool_App>("api")
     .WithReference(ollamaModel).WaitFor(ollamaModel);
 
 builder.AddViteApp("frontend", "../src/SqlAuditedQueryTool.App/ClientApp")
+    .WithHttpEndpoint(port: 5173, name: "vite")
     .WithReference(api).WaitFor(api);
 
 builder.Build().Run();

@@ -65,3 +65,27 @@
 - **Security maintained:** All queries (user + AI) still flow through `SqlQueryExecutor` validation (readonly enforcement) and `GitHubAuditLogger` (audit trail). No bypass path exists.
 - **Integration ready:** Radagast can now implement Ollama tool calling using `POST /api/query/execute` with `source: "AI"`. The API returns `historyId` for tracking, and the frontend can retrieve history via `GET /api/query/history`.
 - **Future work:** Can replace `InMemoryQueryHistoryStore` with DB-backed implementation (EF Core) without changing consumers. Add filtering/pagination to history endpoint as needed.
+
+### 2026-02-22: Chat Response Timeout Configuration
+- **Problem identified:** LLM chat responses were timing out at 30 seconds, which is too short for complex queries requiring multiple tool calls or long-running analysis.
+- **Default timeout changed:** Increased default chat timeout from 30 seconds to 120 seconds (2 minutes) based on Andrew's request.
+- **Configuration added:** Added `ChatTimeoutSeconds` property to `OllamaOptions` configuration class with default value of 120. Created computed property `ChatTimeout` that returns `TimeSpan.FromSeconds(ChatTimeoutSeconds)` for convenient use.
+- **HttpClient configuration:** Modified `Program.cs` to configure the HttpClient timeout for the "ollamaModel" named client using `IConfigureOptions<HttpClientFactoryOptions>`. The timeout is now dynamically read from `OllamaOptions.ChatTimeout` at startup.
+- **Settings updated:** Added `"ChatTimeoutSeconds": 120` to `appsettings.json` in the Llm section. This makes the timeout easily configurable without code changes - users can adjust it in appsettings.json or appsettings.Development.json.
+- **Key files modified:** `src\SqlAuditedQueryTool.Llm\Configuration\OllamaOptions.cs`, `src\SqlAuditedQueryTool.App\Program.cs`, `src\SqlAuditedQueryTool.App\appsettings.json`.
+- **Pattern learned:** When configuring named HttpClients registered by Aspire extensions, use `IConfigureOptions<HttpClientFactoryOptions>` with `ConfigureNamedOptions` to apply settings like timeout. The named client must match the registration name ("ollamaModel" in this case).
+- **Note:** The timeout applies to the entire HTTP request/response cycle with Ollama. For streaming chat, this is the timeout for establishing the stream, not for receiving chunks. For non-streaming chat with tool calling loops, this is the timeout per individual LLM call.
+
+### 2026-02-22: Aspire Frontend Port Configuration
+- **Problem:** Frontend ViteApp was running on a random port assigned by Aspire instead of the expected port 5173 configured in vite.config.ts.
+- **Root cause:** The AppHost's `AddViteApp` call didn't specify a port, so Aspire allocated one dynamically. Vite's configuration specifies port 5173, but Aspire needs to be told to use that port explicitly.
+- **Fix:** Added `.WithHttpEndpoint(port: 5173)` to the frontend ViteApp resource in AppHost.cs. This ensures Aspire assigns the correct port that matches Vite's configuration.
+- **Pattern:** For Aspire-managed apps with specific port requirements (like Vite dev servers), always use `.WithHttpEndpoint(port: <desired_port>)` to avoid port conflicts and ensure predictable URLs.
+- **File modified:** `SqlAuditedQueryTool.AppHost\AppHost.cs` — frontend resource now explicitly binds to port 5173.
+
+### 2026-02-22: Aspire Duplicate Endpoint Fix
+- **Problem:** `DistributedApplicationException: Endpoint with name 'http' already exists` when running AppHost after adding `.WithHttpEndpoint(port: 5173)`.
+- **Root cause:** The `.AddViteApp()` method automatically creates a default HTTP endpoint. Calling `.WithHttpEndpoint(port: 5173)` without specifying a name tried to create a second endpoint also named "http", causing a conflict.
+- **Fix:** Changed `.WithHttpEndpoint(port: 5173)` to `.WithHttpEndpoint(port: 5173, name: "vite")` to give the endpoint a unique name.
+- **Key lesson:** When using `.WithHttpEndpoint()` on Aspire resources that already have a default HTTP endpoint (like ViteApp), always provide a unique `name` parameter to avoid duplicate endpoint name conflicts. Multiple endpoints are allowed, but each must have a distinct name.
+- **Pattern:** `.WithHttpEndpoint(port: 5173, name: "vite")` instead of `.WithHttpEndpoint(port: 5173)` for resources with implicit HTTP endpoints.

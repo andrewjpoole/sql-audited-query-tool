@@ -151,4 +151,26 @@
 - **Pattern to use:** `const { method } = useHook(); useCallback(() => method(), [method])` ✅
 - **Build verified:** `npm run build` succeeds (75 modules, 233.46KB JS gzip 73.24KB)
 
+### 2026-02-23T16:00:00Z: Infinite Chat Bug REAL Fix — Recursive setTimeout
+- **Problem:** Previous fix (destructuring hook) didn't solve the infinite chat bug. Users reported chats still created uncontrollably when sending a message.
+- **REAL root cause:** In `ChatPanel.tsx` `handleSend()` function (lines 82-129), when no session existed, the code called `onNewSession()` then used `setTimeout(() => handleSend(), 0)` to retry. This created an infinite recursion loop because:
+  1. `onNewSession()` creates a session and updates parent state via `setSessions` and `setCurrentSessionId`
+  2. Parent state update triggers re-render, but the `setTimeout` callback has already been scheduled with OLD closure values
+  3. `setTimeout` fires, `handleSend()` runs again with OLD `currentSessionId` (still null)
+  4. Condition `if (!currentSessionId)` is still true, so `onNewSession()` is called AGAIN
+  5. Another `setTimeout` is scheduled, creating infinite loop of session creation
+- **Why setTimeout doesn't work:** React state updates are asynchronous and batched. When you call `onNewSession()`, the component doesn't re-render immediately. The `setTimeout` callback captures the OLD state in its closure, so `currentSessionId` is still null when it runs.
+- **Solution:** Use the RETURN VALUE from `onNewSession()`. The `useChatHistory` hook's `createNewSession()` function returns the new session ID synchronously (line 47-57 in useChatHistory.ts). Changed to: `const sessionId = currentSessionId || onNewSession();` — this gets the ID immediately without waiting for re-render.
+- **Key changes:**
+  - Line 82-107: Removed `setTimeout` recursion pattern entirely
+  - Line 93: Changed from `if (!currentSessionId) { onNewSession(); setTimeout(...); return; }` to `const sessionId = currentSessionId || onNewSession();`
+  - Line 95-130: All session updates now use local `sessionId` variable instead of relying on state
+  - Updated `ChatPanelProps.onNewSession` type from `() => void` to `() => string` to match actual return type
+  - Updated `App.tsx` `handleNewChatSession` callback to return the value from `createNewSession()`
+  - Removed unused `updateMessages` callback wrapper (lines 70-74) since we now call `onUpdateSession` directly with the local `sessionId`
+- **Key learning:** NEVER use `setTimeout(() => recursiveCall(), 0)` to retry after state updates. React state updates are async — the callback will capture OLD state in closure. Instead, use return values from state-updating functions when available, or use refs/useEffect for coordination.
+- **Anti-pattern:** `if (!state) { updateState(); setTimeout(() => retry(), 0); }` ❌
+- **Correct pattern:** `if (!state) { const newState = updateStateAndReturn(); useNewState(newState); }` ✅
+- **Build verified:** `npm run build` succeeds (75 modules, 233.40KB JS gzip 73.23KB)
+
 

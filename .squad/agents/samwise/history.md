@@ -17,3 +17,51 @@
 - **App composition:** App references Database along with Audit and Llm
 - **Test project:** `SqlAuditedQueryTool.Database.Tests` with xUnit — ready for EF Core and query layer tests
 - **Ready to start:** Database layer implementation, connection patterns, EF Core DbContext setup
+
+### 2026-02-22T13:00:00Z: Core Features Implemented
+- **Core models:** QueryResult extended with `Rows` property (IReadOnlyList<IReadOnlyDictionary<string, object?>>) for returning actual query data to the API. AuditEntry extended with `GitHubIssueUrl` for audit trail linking.
+- **Database layer:** `ReadOnlyConnectionFactory` enforces `ApplicationIntent=ReadOnly` + `SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED` on every connection. `SqlQueryExecutor` validates queries against 9 forbidden keywords (INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, CREATE, EXEC, EXECUTE) via compiled regex before execution.
+- **Audit logging:** `GitHubAuditLogger` posts markdown-formatted comments to a configured GitHub issue using Octokit. Includes SHA256 integrity hash, query text in SQL code block, execution stats. Audit failures don't block query results.
+- **API endpoints:** `POST /api/query/execute` (execute + audit), `GET /api/query/history` (placeholder). CORS configured for React dev server at localhost:5173.
+- **Aspire:** AppHost (`Aspire.AppHost.Sdk/9.2.1`) orchestrates App + SQL Server container. ServiceDefaults added with OpenTelemetry, health checks, service discovery. Both added to solution.
+- **Package versions pinned:** EF Core 9.x, Microsoft.Data.SqlClient 6.x (net10.0-only versions excluded). ServiceDefaults OpenTelemetry packages pinned to 1.11.x for net9.0 compat.
+- **Merged with Radagast's LLM work:** Program.cs now wires up Database, Audit, and Llm services together with streaming chat, query suggestion, and schema endpoints.
+
+### 2026-02-22: Aspire Ollama Integration via CommunityToolkit
+- **AppHost:** Already had `CommunityToolkit.Aspire.Hosting.Ollama` and Ollama resource. Updated `AddModel` call to use clean resource name `"ollamaModel"` with model `"qwen2.5-coder:7b"`.
+- **App project:** Added `CommunityToolkit.Aspire.OllamaSharp` package. `Program.cs` calls `builder.AddOllamaApiClient("ollamaModel")` to register `IOllamaApiClient` via Aspire service discovery.
+- **Llm project:** Added `OllamaSharp` package. `OllamaLlmService` now takes `IOllamaApiClient` (from OllamaSharp) instead of raw `HttpClient`. Removed manual HTTP/JSON DTOs — uses OllamaSharp typed API.
+- **DI wiring:** `LlmServiceCollectionExtensions.AddLlmServices()` no longer uses `AddHttpClient<>`. `IOllamaApiClient` is registered by Aspire; `ILlmService` → `OllamaLlmService` via `AddScoped`.
+- **Default model:** `OllamaOptions.Model` default changed from `llama3.2` to `qwen2.5-coder:7b`.
+- **Key extension method:** `AddOllamaApiClient` (NOT `AddOllamaSharpApiClient`) from CommunityToolkit.Aspire.OllamaSharp.
+- **AppHost path:** `SqlAuditedQueryTool.AppHost\` (at repo root, not under `src\`).
+
+### 2026-02-22: Schema Metadata Enhancement
+- **Models enriched:** `SchemaContext.cs` now has `IndexSchema`, `ForeignKeySchema` (new classes), plus `TableSchema` extended with `PrimaryKey`, `Indexes`, `ForeignKeys` lists. `ColumnSchema` extended with `IsPrimaryKey`, `IsIdentity`, `DefaultValue`, `IsComputed`.
+- **All new properties use defaults** (empty lists, false, null) — fully backward-compatible with existing LLM and API consumers.
+- **Provider upgraded:** `SchemaMetadataProvider` now runs 5 queries total: the original INFORMATION_SCHEMA query for base columns, plus 4 sys.* catalog queries (column extras, primary keys, indexes, foreign keys). Results are merged in-memory via table key lookups.
+- **Immutable model update pattern:** Since `ColumnSchema` uses `init` setters, enrichment replaces columns in the list rather than mutating. This is a deliberate pattern.
+- **Build note:** Full solution build may fail with file-lock errors if the App is running (PID lock on output DLLs). Individual project builds (`dotnet build src\SqlAuditedQueryTool.Core` etc.) verify compilation cleanly.
+
+### 2026-02-22: Chat API "Failed to fetch" Bug Fix
+- **Root cause:** Frontend sends lowercase JSON properties (`messages`, `includeSchema`) but ASP.NET Core's default JSON deserialization is case-sensitive. The `ChatRequest` record expected PascalCase (`Messages`, `IncludeSchema`), causing deserialization to fail silently and return null values, which triggered exceptions downstream.
+- **Fix applied:** Added `builder.Services.ConfigureHttpJsonOptions(options => { options.SerializerOptions.PropertyNameCaseInsensitive = true; })` in Program.cs to enable case-insensitive JSON property name matching across all API endpoints.
+- **Logging enhancement:** Added request logging to `/api/chat` endpoint to track incoming request parameters (SystemPrompt presence, message count, stream flag, includeSchema flag) for easier debugging.
+- **Impact:** This fix resolves the "Failed to fetch" error in the chat interface and makes all API endpoints more resilient to casing differences between frontend (camelCase) and backend (PascalCase) conventions.
+- **Lesson learned:** ASP.NET Core minimal APIs use System.Text.Json which is case-sensitive by default. When working with JavaScript/TypeScript frontends that use camelCase, always configure `PropertyNameCaseInsensitive = true` for better interoperability.
+
+### 2026-02-22: DI Scoping and Audit Resilience Fixes
+- **Problem 1 — Chat endpoint crash:** The `/api/chat` endpoint was calling `app.Services.GetRequiredService<ISchemaProvider>()` which resolves from the root service provider. However, `ISchemaProvider` is registered as **scoped** (per-request lifetime), and scoped services can only be resolved from a scoped provider (like `HttpContext.RequestServices`), not the root singleton provider.
+- **Fix 1:** Changed the chat endpoint to inject `ISchemaProvider` as a method parameter instead of manually resolving it. ASP.NET Core's minimal API framework automatically injects scoped services from the request scope: `app.MapPost("/api/chat", async (ChatRequest request, ILlmService llmService, ISchemaProvider schemaProvider, ...) =>`. This follows the framework's DI pattern and avoids scope violations.
+- **Problem 2 — Audit logger crashes on startup:** `GitHubAuditLogger` constructor threw `InvalidOperationException` if any of the four required config values (`GitHubAudit:RepoOwner`, `RepoName`, `IssueNumber`, `Token`) were missing. This blocked the entire app from starting in local dev environments where GitHub integration isn't configured yet.
+- **Fix 2:** Made `GitHubAuditLogger` gracefully degrade when configuration is missing. Constructor now checks if all four config values are present via `_isConfigured` flag. If missing, it logs a warning and sets `_gitHubClient` to null. The `LogQueryAsync` method checks `_isConfigured` — if true, posts to GitHub; if false, logs locally only and returns an `AuditEntry` with `GitHubIssueUrl = null`. This makes the app usable in dev/test environments without requiring GitHub credentials.
+- **Key lesson:** Never resolve scoped services from the root provider — use constructor/method injection or `HttpContext.RequestServices`. For optional external integrations (GitHub, email, etc.), design for graceful degradation: check config availability, log warnings, and provide fallback behavior instead of throwing exceptions on startup.
+
+### 2026-02-22: Query History Tracking for AI-Initiated Queries
+- **New models:** Created `QueryHistory` (with `Id`, `Sql`, `RequestedBy`, `Source`, timestamps, execution stats, audit URL) and `QuerySource` enum (User | AI) in Core/Models to track all executed queries with source differentiation.
+- **History store:** Added `IQueryHistoryStore` interface with `AddAsync`, `GetAllAsync(limit)`, and `GetByIdAsync(id)` methods. Implemented `InMemoryQueryHistoryStore` using `ConcurrentDictionary` + `ConcurrentQueue` for thread-safe in-memory persistence. Registered as singleton in DI.
+- **API changes:** Updated `POST /api/query/execute` to accept optional `Source` field ("AI" for Ollama queries), create QueryHistory entries after audit, and return `historyId` in response. Implemented `GET /api/query/history?limit=N` endpoint to retrieve recent query executions with full metadata.
+- **Source tracking:** Queries from Ollama are marked with `RequestedBy = "Ollama"` and `Source = QuerySource.AI`. User queries use `Source = QuerySource.User`. This enables frontend to display query origin and load AI queries into the query window.
+- **Security maintained:** All queries (user + AI) still flow through `SqlQueryExecutor` validation (readonly enforcement) and `GitHubAuditLogger` (audit trail). No bypass path exists.
+- **Integration ready:** Radagast can now implement Ollama tool calling using `POST /api/query/execute` with `source: "AI"`. The API returns `historyId` for tracking, and the frontend can retrieve history via `GET /api/query/history`.
+- **Future work:** Can replace `InMemoryQueryHistoryStore` with DB-backed implementation (EF Core) without changing consumers. Add filtering/pagination to history endpoint as needed.

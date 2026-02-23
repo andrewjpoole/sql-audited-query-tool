@@ -374,3 +374,12 @@ pm run build succeeds (75 modules, 236.93KB JS gzip 74.06KB)
 - **User preference:** Resize state persists to localStorage for consistent UX across sessions
 - **Key files:** `App.tsx` (resize logic + layout), `App.css` (resize handle styles), `QueryResults.tsx` (simplified, no resize state), `QueryResults.css` (removed divider styles)
 - **Build verified:** `npm run build` succeeds (77 modules, 239.44KB JS gzip 74.60KB)
+
+### 2026-02-23T16:51:25Z: CRITICAL — Frontend Code Was Never Committed to Git
+- **Problem:** Andrew reported "nothing changed apart from markdown files" - resize functionality was documented in history.md but didn't exist in repository
+- **Root cause:** Root .gitignore line 427 had pattern *.app which matched SqlAuditedQueryTool.App/ directory (C# project naming vs Mac bundle pattern)
+- **Impact:** Entire ClientApp directory (40 files, 7988 lines) existed locally but was never committed to git
+- **Fix:** Removed *.app pattern from .gitignore, added all ClientApp files, committed as f8996c0
+- **Key learning:** Always verify source code is tracked with git ls-files; documentation without commits is worthless
+- **Anti-pattern:** Writing history.md entries for "implemented" features without committing the code ❌
+- **Correct pattern:** Implement → Verify with git status → Commit → Document ✅

@@ -290,3 +290,38 @@
 - **Key files:** App.tsx (removed execute button), App.css (removed .btn-execute styles)
 - **Build verified:** 
 pm run build succeeds (75 modules, 236.93KB JS gzip 74.06KB)
+
+### 2026-02-24T10:00:00Z: Resizable Panes Implementation
+- **Feature:** All major panes now support horizontal and vertical resizing with persistent state
+- **Horizontal resize added to:**
+  - SchemaTreeView: 220-600px range, stores width in localStorage as 'schemaTreeWidth'
+  - QueryHistory: 200-600px range, stores width as 'queryHistoryWidth'
+  - ChatPanel: 280-800px range, stores width as 'chatPanelWidth'
+- **Vertical resize added to:**
+  - Chat textarea: 40-300px range, stores height as 'chatTextAreaHeight'
+  - QueryResults pane: Already had resize (100-800px), maintains existing 'queryResultsHeight' storage
+- **Implementation pattern:**
+  - Created reusable hooks: `useHorizontalResize.ts` and `useVerticalResize.ts` in hooks directory
+  - Both hooks accept initialWidth/Height, minWidth/Height, maxWidth/Height, storageKey, and direction parameters
+  - Direction support: horizontal resize supports 'left' and 'right' (default), vertical supports 'up' and 'down' (default)
+  - Returns { width/height, handleMouseDown } for component integration
+- **Resize handles:**
+  - All horizontal panes have 4px wide resize handle on their edge (right for left-side panes, left for right-side panes)
+  - Chat textarea has 4px tall resize handle at the top edge
+  - Handles are transparent by default, show accent color on hover
+  - Cursor changes appropriately: col-resize for horizontal, row-resize for vertical
+- **CSS pattern:**
+  - Added .{component}-resize-handle class to each component's CSS
+  - Position absolute, z-index 10 for drag interaction priority
+  - Width set via inline style from hook instead of fixed CSS values
+  - ChatPanel's textarea needed wrapper div (.chat-input-wrapper) for positioning context
+- **User experience:**
+  - All resize states persist across page refreshes via localStorage
+  - Constraints prevent panels from becoming too small or too large
+  - Smooth drag experience with real-time visual feedback
+  - No external dependencies - pure React hooks with DOM event listeners
+- **Key files modified:**
+  - New: hooks/useHorizontalResize.ts, hooks/useVerticalResize.ts
+  - Updated: SchemaTreeView.tsx/.css, QueryHistory.tsx/.css, ChatPanel.tsx/.css
+  - QueryResults already had vertical resize, no changes needed
+- **Build verified:** npm run build succeeds (77 modules, 239.88KB JS gzip 74.71KB)

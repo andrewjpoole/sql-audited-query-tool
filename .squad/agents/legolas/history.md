@@ -383,3 +383,24 @@ pm run build succeeds (75 modules, 236.93KB JS gzip 74.06KB)
 - **Key learning:** Always verify source code is tracked with git ls-files; documentation without commits is worthless
 - **Anti-pattern:** Writing history.md entries for "implemented" features without committing the code ❌
 - **Correct pattern:** Implement → Verify with git status → Commit → Document ✅
+
+### 2026-02-23T23:00:00Z: Resize Handle Fixes — Query Results & History Panel
+- **Problem 1 - Duplicate resize handle in query results:** Query results pane had TWO resize handles — one between editor and results (working), and one at top of results panel (redundant)
+  - **Root cause:** Lines 65-71 in App.tsx defined unused `resultsHeight` and `handleResultsResize` from `useVerticalResize` hook, and lines 299-301 rendered a second resize handle inside the results panel
+  - **Solution:** Removed the redundant vertical resize hook for results panel and its associated resize handle div
+  - **Files changed:** App.tsx (removed lines 65-71, 299-301), App.css (changed results-panel from `flex-shrink: 0` to `flex: 1` to fill remaining space)
+- **Problem 2 - Missing resize handle on query history:** Query history pane had horizontal resize (width) but user requested vertical resize (height) as well
+  - **Solution:** Added vertical resize using `useVerticalResize` hook with settings: initialHeight 400px, min 200px, max 800px, localStorage key `queryHistoryHeight`
+  - **Implementation:**
+    - Line 2: Imported `useVerticalResize` hook in QueryHistory.tsx
+    - Lines 32-37: Added vertical resize hook with `direction: 'down'`
+    - Line 40: Updated component div to include height style: `style={{ width: ${width}px, height: ${height}px }}`
+    - Lines 42-44: Added `.qh-resize-handle-vertical` div positioned at bottom with `onMouseDown={handleVerticalResize}`
+    - CSS additions: `.qh-resize-handle-vertical` positioned absolutely at bottom with ns-resize cursor, `.qh-resize-handle-bar` visual indicator (40px × 3px bar)
+  - **UX:** Query history panel now supports both horizontal (right edge) and vertical (bottom edge) resizing with localStorage persistence
+- **Key learnings:**
+  - When one resize handle already provides the needed functionality, additional handles on the same boundary are redundant and confusing
+  - Vertical resize on sidebar panels improves UX by letting users control both dimensions independently
+  - Position vertical handles at bottom of panel with `direction: 'down'` for intuitive drag behavior
+- **Key files:** App.tsx, App.css, QueryHistory.tsx, QueryHistory.css
+- **Build verified:** `npm run build` succeeds (77 modules, 239.76KB JS gzip 74.64KB)

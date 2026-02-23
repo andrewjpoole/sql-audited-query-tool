@@ -29,6 +29,7 @@ public static class Extensions
         builder.Services.ConfigureHttpClientDefaults(http =>
         {
             // Turn on resilience by default
+            // Use configured options if available (allows override from Program.cs)
             http.AddStandardResilienceHandler();
 
             // Turn on service discovery by default

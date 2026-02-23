@@ -76,6 +76,14 @@
 - **Pattern learned:** When configuring named HttpClients registered by Aspire extensions, use `IConfigureOptions<HttpClientFactoryOptions>` with `ConfigureNamedOptions` to apply settings like timeout. The named client must match the registration name ("ollamaModel" in this case).
 - **Note:** The timeout applies to the entire HTTP request/response cycle with Ollama. For streaming chat, this is the timeout for establishing the stream, not for receiving chunks. For non-streaming chat with tool calling loops, this is the timeout per individual LLM call.
 
+### 2026-02-23T17:28:00Z: QueryResults Resizing Delegation
+- **User request:** Andrew wanted the QueryResults window to be resizable following timeout issue resolution.
+- **Delegation:** Routed to software-engineer agent as this is a frontend React change (Legolas owns frontend).
+- **Implementation:** Software-engineer added resizing using existing `useVerticalResize` hook pattern (already established by Legolas for other panels).
+- **Changes:** Modified `App.tsx` to add second vertical resize hook for results panel (300px initial, 100-600px range, localStorage key `'resultsPanelHeight'`), added resize handle above QueryResults, updated CSS for proper flex/overflow handling.
+- **Pattern consistency:** Followed exact same pattern as editor panel resize - visual feedback, localStorage persistence, smooth dragging, directional configuration.
+- **Key lesson:** When user requests frontend changes, delegate to software-engineer or check if Legolas pattern already exists. Backend dev shouldn't touch React components directly.
+
 ### 2026-02-22: Aspire Frontend Port Configuration
 - **Problem:** Frontend ViteApp was running on a random port assigned by Aspire instead of the expected port 5173 configured in vite.config.ts.
 - **Root cause:** The AppHost's `AddViteApp` call didn't specify a port, so Aspire allocated one dynamically. Vite's configuration specifies port 5173, but Aspire needs to be told to use that port explicitly.

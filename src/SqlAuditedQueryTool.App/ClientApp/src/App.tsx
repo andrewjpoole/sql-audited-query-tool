@@ -286,13 +286,15 @@ export default function App() {
             <div className="resize-handle-bar" />
           </div>
 
-          <QueryResults
-            result={queryResult}
-            loading={queryLoading}
-            error={queryError}
-            collapsed={resultsCollapsed}
-            onToggleCollapse={() => setResultsCollapsed((v) => !v)}
-          />
+          <div className="results-panel">
+            <QueryResults
+              result={queryResult}
+              loading={queryLoading}
+              error={queryError}
+              collapsed={resultsCollapsed}
+              onToggleCollapse={() => setResultsCollapsed((v) => !v)}
+            />
+          </div>
         </div>
 
         <ChatPanel

@@ -1,4 +1,5 @@
 import { useHorizontalResize } from '../hooks/useHorizontalResize';
+import { useVerticalResize } from '../hooks/useVerticalResize';
 import './QueryHistory.css';
 
 export interface HistoryEntry {
@@ -30,6 +31,14 @@ export default function QueryHistory({ entries, onSelect }: QueryHistoryProps) {
     storageKey: 'queryHistoryWidth',
   });
 
+  const { height, handleMouseDown: handleVerticalResize } = useVerticalResize({
+    initialHeight: 400,
+    minHeight: 200,
+    maxHeight: 800,
+    storageKey: 'queryHistoryHeight',
+    direction: 'down',
+  });
+
   if (entries.length === 0) {
     return (
       <div className="qh-empty">No queries executed yet in this session.</div>
@@ -37,8 +46,11 @@ export default function QueryHistory({ entries, onSelect }: QueryHistoryProps) {
   }
 
   return (
-    <div className="qh" style={{ width: `${width}px` }}>
+    <div className="qh" style={{ width: `${width}px`, height: `${height}px` }}>
       <div className="qh-resize-handle" onMouseDown={handleMouseDown} />
+      <div className="qh-resize-handle-vertical" onMouseDown={handleVerticalResize}>
+        <div className="qh-resize-handle-bar" />
+      </div>
       <div className="qh-title">Query History</div>
       <ul className="qh-list">
         {[...entries].reverse().map((entry, i) => (

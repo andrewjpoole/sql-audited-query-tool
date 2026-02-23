@@ -173,4 +173,120 @@
 - **Correct pattern:** `if (!state) { const newState = updateStateAndReturn(); useNewState(newState); }` ✅
 - **Build verified:** `npm run build` succeeds (75 modules, 233.40KB JS gzip 73.23KB)
 
+### 2026-02-23T18:00:00Z: SQL Insertion Broken After Tabbed Editor Refactor — Fixed
+- **Problem:** "Insert and Execute" and "Insert into Editor" buttons in ChatPanel stopped updating editor contents after switching to TabbedSqlEditor
+- **Root cause:** When refactoring from `SqlEditor` to `TabbedSqlEditor`, the callbacks in `App.tsx` were still using `setSql()` to update state directly. This doesn't work with Monaco's multi-model system used by tabbed editor:
+  1. TabbedSqlEditor maintains separate Monaco models per tab via unique `path` props
+  2. Each model has independent content managed by Monaco itself
+  3. Setting React state (`setSql`) doesn't sync with the active Monaco model's content
+  4. Result: state updates but Monaco editor shows stale content
+- **Solution:** Added `setValue()` method to `SqlEditorHandle` interface that directly manipulates Monaco model content:
+  - Line 7-10 in TabbedSqlEditor.tsx: Extended interface to export `setValue(text: string)` alongside existing `insertTextAtCursor()`
+  - Line 55-73: Implemented `setValue()` in `useImperativeHandle` — gets active model and calls `model.setValue(text)`
+  - Updated all App.tsx callbacks to use editor ref methods instead of state setters:
+    - `handleInsertSql`: Changed from `setSql(newSql)` to `editorRef.current?.insertTextAtCursor(newSql)` — inserts at cursor
+    - `handleInsertAndExecute`: Changed from `setSql(newSql)` to `editorRef.current?.setValue(newSql)` — replaces content then executes
+    - `handleAiExecutedQuery`: Changed from `setSql(executedSql)` to `editorRef.current?.setValue(executedSql)` — loads AI query
+    - `handleHistorySelect`: Changed from `setSql(selectedSql)` to `editorRef.current?.setValue(selectedSql)` — loads history item
+- **Key insight:** When using Monaco with multi-model support, ALWAYS manipulate editor content via Monaco's model API, not React state. State should be read-only derived from editor changes via `onChange` callback.
+- **Pattern learned:**
+  - ❌ Anti-pattern: `setSql(newValue)` expecting Monaco to sync from state (doesn't work with multi-model)
+  - ✅ Correct pattern: `editorRef.current?.setValue(newValue)` OR `editorRef.current?.insertTextAtCursor(text)` depending on desired behavior
+- **Why it broke:** Original `SqlEditor` used single model, so state and Monaco stayed in sync. TabbedSqlEditor uses Monaco's multi-model feature (via `path` prop), where each tab has independent model state. Monaco becomes the source of truth, not React state.
+- **Build verified:** `npm run build` succeeds (75 modules, 233.55KB JS gzip 73.25KB)
 
+### 2026-02-23T20:00:00Z: Resizable Results Pane & Multiple Result Sets
+- **Feature 1 - Draggable divider:** Added horizontal resize divider between editor and results panel
+  - **Implementation:** Custom mouse drag handlers using `useRef` for drag state and `useEffect` for global mouse listeners
+  - **Position persistence:** Height stored in localStorage (`queryResultsHeight` key) with default 300px, constrained between 100-800px
+  - **UX:** Divider appears at top of results panel with visual handle that highlights on hover; cursor changes to `ns-resize`
+  - **CSS:** `.qr-divider` positioned absolutely at top -3px, contains centered `.qr-divider-handle` (40px × 3px bar) that turns accent color on hover
+  - **No external libraries:** Pure React + CSS implementation using mouse events, no dependency on resize libraries
+- **Feature 2 - Multiple result sets:** Results panel now supports displaying multiple result tables from queries with multiple SELECT statements
+  - **API type changes:** 
+    - New `QueryResultSet` interface with `columns`, `rows`, `rowCount`
+    - `QueryResult` extended with `resultSets: QueryResultSet[]` array
+    - Legacy support maintained via optional `columns`, `rows`, `rowCount` fields for backward compatibility
+  - **Tab UI:** When multiple result sets exist, tab bar appears showing "Result Set 1", "Result Set 2", etc. with row counts
+  - **Active tab state:** `activeTab` state tracks which result set is visible; resets to 0 when new results arrive
+  - **Sorting per result set:** `sortState` tracks `{ resultSetIndex, column, direction }` so each result set has independent sort state
+  - **Header metadata:** Shows total row count across all sets plus count of sets: "150 rows (3 sets) • 245ms"
+  - **CSS additions:** `.qr-tabs`, `.qr-tab`, `.qr-tab--active`, `.qr-tab-count`, `.qr-content` styles with accent color highlighting
+  - **Backward compatibility:** Single result set queries display without tabs, works with both new `resultSets` array and legacy `columns`/`rows` fields
+- **App.tsx changes:** Updated query execution handlers to calculate `totalRows` from `resultSets` array or fall back to legacy `rowCount`
+- **Key files:** `queryApi.ts` (type definitions), `QueryResults.tsx` (component logic), `QueryResults.css` (divider + tabs styling), `App.tsx` (result aggregation)
+- **Build verified:** `npm run build` succeeds (75 modules, 235.38KB JS gzip 73.76KB)
+
+### 2026-02-23T22:00:00Z: Monaco Keybindings, Command Palette, Context Menu & Divider Fix
+- **Feature 1 - Execute toolbar:** Added `editor-toolbar` above Monaco editor with "Execute" (F5) and "Run Selection" (F8) buttons
+  - Toolbar positioned between tab bar and editor container in `TabbedSqlEditor.tsx`
+  - Primary execute button styled with accent color, secondary run selection button with muted style
+  - Both buttons show keyboard shortcuts in title tooltips
+- **Feature 2 - Monaco keybindings:** Implemented F5 (Execute Query) and F8 (Run Selection) keyboard shortcuts
+  - Used `monaco.addAction()` with `keybindings: [monaco.KeyCode.F5]` and `[monaco.KeyCode.F8]`
+  - Both actions appear in command palette (Ctrl+Shift+P / Cmd+Shift+P) via `label` property
+  - Both actions appear in context menu (right-click) via `contextMenuGroupId: 'navigation'` with order 1 and 2
+  - Execute Query runs the full editor content via `onExecute()` callback
+  - Run Selection gets selected text from `editor.getSelection()` and `model.getValueInRange()`, executes via `onExecuteSelection(selectedText)` callback
+  - If no selection, Run Selection falls back to executing full query
+- **Feature 3 - SqlEditorHandle extension:** Extended interface with `executeQuery()` and `executeSelection()` methods for programmatic access
+  - `executeSelection()` checks for selected text, executes selection or falls back to full query
+  - Both methods exposed via `useImperativeHandle` for parent component access
+- **Feature 4 - Props update:** Added `onExecute: () => void` and `onExecuteSelection: (selection: string) => void` props to `TabbedSqlEditor`
+  - Props passed from `App.tsx` as `handleExecute` and `handleExecuteSelection` callbacks
+  - `handleExecuteSelection` accepts `selection` parameter instead of reading from state, executes only the selected SQL
+- **Feature 5 - Divider fix:** Fixed draggable divider between query and results panels that wasn't working
+  - **Root cause:** In `QueryResults.tsx` line 100-104, `handleMouseUp` stored `height` to localStorage using closure value, but `height` was in `useEffect` dependency array causing stale closures and excessive re-renders
+  - **Solution:** Moved `localStorage.setItem()` from `handleMouseUp` to `handleMouseMove` (line 97) so it saves on every drag frame with fresh value
+  - **Dependency fix:** Removed `height` from `useEffect` dependency array (now empty `[]`) to prevent re-creating listeners on every height change
+  - Divider now works smoothly with real-time localStorage persistence during drag
+- **Key learnings:**
+  - Monaco `addAction()` automatically adds to command palette if you provide a `label`
+  - Context menu groups use string IDs like `'navigation'` (built-in) or `'9_sql_helpers'` (custom) with numeric `contextMenuOrder` for positioning
+  - Keybindings use `monaco.KeyCode.F5`, `monaco.KeyCode.F8`, `monaco.KeyMod.Alt | monaco.KeyCode.KeyD` syntax
+  - Getting selected text: `editor.getSelection()` → `model.getValueInRange(selection)` → check `.trim()` to see if non-empty
+  - When storing values in `localStorage` from mouse event handlers, save during the event (like `mousemove`) not in cleanup, to avoid stale closures from `useEffect` dependencies
+  - Never put values that change frequently (like `height`) in `useEffect` dependencies when setting up global event listeners — keep dependencies minimal or empty
+- **CSS additions:** `.editor-toolbar`, `.btn-execute-toolbar`, `.btn-execute-toolbar--secondary` styles with accent color and hover states
+- **Key files:** `TabbedSqlEditor.tsx` (actions + toolbar), `TabbedSqlEditor.css` (toolbar styles), `App.tsx` (callbacks), `QueryResults.tsx` (divider fix)
+- **Build verified:** `npm run build` succeeds (75 modules, 236.94KB JS gzip 74.06KB)
+
+### 2026-02-23T22:30:00Z: F5→F7 Keybinding Change & Multiple Query Execution Fix
+- **Problem 1 - F5 triggers page refresh:** User reported that F5 keybinding for Execute Query conflicts with browser page refresh
+- **Solution 1:** Changed Execute Query keybinding from F5 to F7 in `TabbedSqlEditor.tsx`
+  - Line 101: Updated Monaco action keybinding from `monaco.KeyCode.F5` to `monaco.KeyCode.F7`
+  - Line 350: Updated toolbar button tooltip from "Execute Query (F5)" to "Execute Query (F7)"
+  - Context menu and command palette labels remain "Execute Query" (no change needed)
+- **Problem 2 - Multiple query execution errors:** When pressing Execute button or F7 multiple times rapidly, queries would execute multiple times simultaneously causing errors
+- **Root cause:** Race condition in `handleExecute()` and `handleExecuteSelection()` functions
+  - The check `if (queryLoading) return;` uses React state which updates asynchronously
+  - If user triggers execute twice quickly, both calls pass the check before `setQueryLoading(true)` takes effect
+  - Both async operations then run in parallel, causing duplicate API calls and state corruption
+- **Solution 2:** Added `executingRef` ref to track execution state synchronously
+  - Line 28: Added `const executingRef = useRef(false);` to App.tsx
+  - Updated all three execute handlers (`handleExecute`, `handleExecuteSelection`, `handleInsertAndExecute`) to:
+    1. Check `executingRef.current` instead of `queryLoading` state
+    2. Set `executingRef.current = true` immediately before async work
+    3. Set `executingRef.current = false` in finally block after completion
+  - Ref updates are synchronous, so second call sees `executingRef.current = true` and returns immediately
+- **Key learning:** For preventing duplicate async operations, use refs not state
+  - React state updates are batched and asynchronous — multiple calls can pass the same state check before updates apply
+  - `useRef` provides synchronous mutable values that update immediately, perfect for execution guards
+  - Pattern: `if (executingRef.current) return; executingRef.current = true; try { ... } finally { executingRef.current = false; }`
+- **Anti-pattern:** `if (loading) return; setLoading(true); asyncWork();` ❌ (race condition)
+- **Correct pattern:** `if (executingRef.current) return; executingRef.current = true; setLoading(true); try { asyncWork(); } finally { setLoading(false); executingRef.current = false; }` ✅
+- **Files changed:** `TabbedSqlEditor.tsx` (keybinding + tooltip), `App.tsx` (executingRef logic)
+- **Build verified:** `npm run build` succeeds (75 modules, 237.04KB JS gzip 74.09KB)
+
+
+
+### 2026-02-23T07:45:19Z: Removed Legacy Execute Button from Main Toolbar
+- **Task:** Removed old execute button from main App toolbar since TabbedSqlEditor now has integrated Execute/Run Selection buttons
+- **Removed from App.tsx:** Execute button in main toolbar (lines 224-230) that duplicated functionality now in editor toolbar
+- **Removed from App.css:** .btn-execute CSS rules (lines 65-88) including hover, active, and disabled states — no longer needed
+- **Rationale:** TabbedSqlEditor component now has dedicated editor toolbar above Monaco with "Execute Query (F7)" and "Run Selection (F8)" buttons, making the main toolbar execute button redundant
+- **UI improvement:** Cleaner toolbar layout with only History and Chat toggle buttons, connection status indicator on right
+- **Code cleanup:** Removed unused CSS classes and button component, reducing bundle size and maintenance surface
+- **Key files:** App.tsx (removed execute button), App.css (removed .btn-execute styles)
+- **Build verified:** 
+pm run build succeeds (75 modules, 236.93KB JS gzip 74.06KB)

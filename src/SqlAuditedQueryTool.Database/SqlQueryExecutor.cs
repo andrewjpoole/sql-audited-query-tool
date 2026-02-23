@@ -1,5 +1,6 @@
 using System.Diagnostics;
 using System.Text.RegularExpressions;
+using Microsoft.Extensions.Logging;
 using SqlAuditedQueryTool.Core.Interfaces;
 using SqlAuditedQueryTool.Core.Models;
 
@@ -11,6 +12,7 @@ namespace SqlAuditedQueryTool.Database;
 public sealed partial class SqlQueryExecutor : IQueryExecutor
 {
     private readonly IConnectionFactory _connectionFactory;
+    private readonly ILogger<SqlQueryExecutor> _logger;
 
     // Forbidden SQL keywords that indicate write operations
     private static readonly string[] ForbiddenKeywords =
@@ -23,9 +25,10 @@ public sealed partial class SqlQueryExecutor : IQueryExecutor
         RegexOptions.IgnoreCase | RegexOptions.Compiled)]
     private static partial Regex WriteOperationPattern();
 
-    public SqlQueryExecutor(IConnectionFactory connectionFactory)
+    public SqlQueryExecutor(IConnectionFactory connectionFactory, ILogger<SqlQueryExecutor> logger)
     {
         _connectionFactory = connectionFactory;
+        _logger = logger;
     }
 
     public async Task<QueryResult> ExecuteReadOnlyQueryAsync(QueryRequest request)
@@ -45,29 +48,49 @@ public sealed partial class SqlQueryExecutor : IQueryExecutor
 
             await using var reader = await command.ExecuteReaderAsync();
 
-            var columnNames = new List<string>();
-            for (var i = 0; i < reader.FieldCount; i++)
-                columnNames.Add(reader.GetName(i));
+            var resultSets = new List<QueryResultSet>();
+            var resultSetIndex = 0;
 
-            var rows = new List<IReadOnlyDictionary<string, object?>>();
-            while (await reader.ReadAsync())
+            do
             {
-                var row = new Dictionary<string, object?>();
+                resultSetIndex++;
+                var columnNames = new List<string>();
                 for (var i = 0; i < reader.FieldCount; i++)
+                    columnNames.Add(reader.GetName(i));
+
+                var rows = new List<IReadOnlyDictionary<string, object?>>();
+                while (await reader.ReadAsync())
                 {
-                    row[columnNames[i]] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                    var row = new Dictionary<string, object?>();
+                    for (var i = 0; i < reader.FieldCount; i++)
+                    {
+                        row[columnNames[i]] = reader.IsDBNull(i) ? null : reader.GetValue(i);
+                    }
+                    rows.Add(row);
                 }
-                rows.Add(row);
-            }
+
+                var resultSet = new QueryResultSet
+                {
+                    RowCount = rows.Count,
+                    ColumnCount = columnNames.Count,
+                    ColumnNames = columnNames,
+                    Rows = rows
+                };
+                
+                resultSets.Add(resultSet);
+                _logger.LogInformation("Result set {Index}: {RowCount} rows, {ColumnCount} columns", 
+                    resultSetIndex, resultSet.RowCount, resultSet.ColumnCount);
+
+            } while (await reader.NextResultAsync());
 
             stopwatch.Stop();
 
+            _logger.LogInformation("Query executed successfully: {ResultSetCount} result set(s), {TotalRows} total rows, {ExecutionMs}ms",
+                resultSets.Count, resultSets.Sum(rs => rs.RowCount), stopwatch.ElapsedMilliseconds);
+
             return new QueryResult
             {
-                RowCount = rows.Count,
-                ColumnCount = columnNames.Count,
-                ColumnNames = columnNames,
-                Rows = rows,
+                ResultSets = resultSets,
                 ExecutionMilliseconds = stopwatch.ElapsedMilliseconds,
                 Succeeded = true
             };
@@ -75,12 +98,10 @@ public sealed partial class SqlQueryExecutor : IQueryExecutor
         catch (Exception ex)
         {
             stopwatch.Stop();
+            _logger.LogError(ex, "Query execution failed after {ExecutionMs}ms", stopwatch.ElapsedMilliseconds);
             return new QueryResult
             {
-                RowCount = 0,
-                ColumnCount = 0,
-                ColumnNames = [],
-                Rows = [],
+                ResultSets = [],
                 ExecutionMilliseconds = stopwatch.ElapsedMilliseconds,
                 Succeeded = false,
                 ErrorMessage = ex.Message
@@ -94,9 +115,7 @@ public sealed partial class SqlQueryExecutor : IQueryExecutor
         {
             return new QueryResult
             {
-                RowCount = 0,
-                ColumnCount = 0,
-                ColumnNames = [],
+                ResultSets = [],
                 ExecutionMilliseconds = 0,
                 Succeeded = false,
                 ErrorMessage = "Query text cannot be empty."
@@ -107,9 +126,7 @@ public sealed partial class SqlQueryExecutor : IQueryExecutor
         {
             return new QueryResult
             {
-                RowCount = 0,
-                ColumnCount = 0,
-                ColumnNames = [],
+                ResultSets = [],
                 ExecutionMilliseconds = 0,
                 Succeeded = false,
                 ErrorMessage = "Write operations are not permitted. Only SELECT queries are allowed."

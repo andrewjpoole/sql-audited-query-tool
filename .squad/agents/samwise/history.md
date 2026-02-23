@@ -89,3 +89,29 @@
 - **Fix:** Changed `.WithHttpEndpoint(port: 5173)` to `.WithHttpEndpoint(port: 5173, name: "vite")` to give the endpoint a unique name.
 - **Key lesson:** When using `.WithHttpEndpoint()` on Aspire resources that already have a default HTTP endpoint (like ViteApp), always provide a unique `name` parameter to avoid duplicate endpoint name conflicts. Multiple endpoints are allowed, but each must have a distinct name.
 - **Pattern:** `.WithHttpEndpoint(port: 5173, name: "vite")` instead of `.WithHttpEndpoint(port: 5173)` for resources with implicit HTTP endpoints.
+
+### 2026-02-22: ASP.NET Core Request Timeout Configuration
+- **Problem:** Chat endpoint was timing out at 30 seconds with error "The operation didn't complete within the allowed timeout of '00:00:30'." This is separate from the Ollama HttpClient timeout (120s) - it's the ASP.NET Core server-level request timeout enforced by Kestrel.
+- **Root cause:** ASP.NET Core's default request timeout is 30 seconds. Long-running LLM chat operations with multi-step tool calling can easily exceed this, especially when the LLM needs to execute multiple SQL queries and process results.
+- **Fix:** Added `AddRequestTimeouts()` middleware configuration in Program.cs to extend the default request timeout from 30 seconds to 5 minutes (300 seconds). This is configured before the app is built and the middleware is activated via `app.UseRequestTimeouts()` in the middleware pipeline.
+- **Configuration approach:** Used `Microsoft.AspNetCore.Http.Timeouts.RequestTimeoutPolicy` with a `DefaultPolicy` that applies to all endpoints. This is cleaner than per-endpoint attributes for our use case where all chat/query operations benefit from longer timeouts.
+- **Timeout layering:** Three timeout layers now work together:
+  1. **Ollama HttpClient timeout** (120s): Controls timeout for individual HTTP calls to Ollama API
+  2. **ASP.NET Core request timeout** (300s): Controls overall request duration from client to server
+  3. **Frontend timeout** (60s, per earlier config): Controls client-side wait time before showing error
+- **Key lesson:** ASP.NET Core has a server-level request timeout (default 30s) that's independent of HttpClient timeouts. For long-running operations like LLM tool calling, you must configure both the outbound HttpClient timeout (for calls to external services) AND the inbound request timeout (for the server to process the entire request). The request timeout should be longer than the sum of expected tool call operations.
+- **File modified:** `src\SqlAuditedQueryTool.App\Program.cs` - added `AddRequestTimeouts()` configuration with 5-minute default policy.
+
+### 2026-02-22: Frontend Timeout Bottleneck Fix (Third Time's the Charm)
+- **Root cause finally identified:** After three attempts to fix timeout issues, discovered the actual bottleneck was the **frontend fetch timeout** set to 60 seconds in `ClientApp/src/api/queryApi.ts`. The backend was configured correctly (ASP.NET Core: 300s, Ollama HttpClient: 120s), but the frontend was aborting requests before the backend had a chance to complete them.
+- **The timeout chain before the fix:**
+  1. Frontend fetch: 60s ← **THE ACTUAL BOTTLENECK**
+  2. Ollama HttpClient: 120s
+  3. ASP.NET Core request timeout: 300s
+- **The fix:** Increased frontend chat timeout from 60 seconds to 180 seconds (3 minutes) in the `chat()` function's default parameter. This gives the LLM tool-calling loop plenty of time to execute multiple queries and process results without the frontend giving up prematurely.
+- **The timeout chain after the fix:**
+  1. Frontend fetch: 180s
+  2. Ollama HttpClient: 120s (will timeout first if a single LLM call takes too long)
+  3. ASP.NET Core request timeout: 300s (safety net for the entire request)
+- **Key lesson learned:** When debugging timeout issues, check **ALL layers** of the stack systematically, including the client-side fetch timeout. Don't assume the backend is the problem. The timeout that fires first is the one that matters, and in this case it was the frontend layer that was too aggressive.
+- **File modified:** `src\SqlAuditedQueryTool.App\ClientApp\src\api\queryApi.ts` - changed default `timeoutMs` parameter from 60000 to 180000.

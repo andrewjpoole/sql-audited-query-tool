@@ -20,9 +20,16 @@ public class AuditIntegrityTests
 
     private QueryResult CreateResult() => new()
     {
-        RowCount = 10,
-        ColumnCount = 3,
-        ColumnNames = ["Id", "Name", "Email"],
+        ResultSets =
+        [
+            new QueryResultSet
+            {
+                RowCount = 10,
+                ColumnCount = 3,
+                ColumnNames = ["Id", "Name", "Email"],
+                Rows = []
+            }
+        ],
         ExecutionMilliseconds = 42,
         Succeeded = true,
         Timestamp = FixedResultTime

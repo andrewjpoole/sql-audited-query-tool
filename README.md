@@ -10,6 +10,8 @@ A readonly SQL database query application designed for incident investigation, w
 - **Chat Interface** — Conversational UI for building and executing queries
 - **EF Core Code Discovery** — Optional discovery of existing EF Core models and mappings to aid query construction
 
+![screenshot](./docs/media/screenshot.png)
+
 ## Architecture
 
 ```

@@ -424,7 +424,8 @@ test-results/
 
 # Mac bundle stuff
 *.dmg
-*.app
+# *.app - REMOVED: This pattern was matching C# project directories like SqlAuditedQueryTool.App/
+# Mac .app bundles should be handled by macOS.gitignore patterns above if needed
 
 # content below from: https://github.com/github/gitignore/blob/main/Global/macOS.gitignore
 # General

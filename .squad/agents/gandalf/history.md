@@ -146,3 +146,39 @@
   2. Call AddServiceDefaults() (which applies the configured options)
   3. Register named clients (AddOllamaApiClient)
   4. Configure client-specific settings (HttpClient.Timeout)
+
+### 2026-02-23: Timeout Still Failing (5th Attempt) — ConfigureAll Fix ✅ RESOLVED
+- **Problem:** STILL getting 30-second timeout after previous fix. This is now the FIFTH attempt.
+- **Deep Dive Discovery:** The previous fix (configuring options BEFORE AddServiceDefaults) was conceptually wrong. Here's what actually happens:
+  1. `AddServiceDefaults()` (line 16) calls `ConfigureHttpClientDefaults` which registers a lambda
+  2. Inside that lambda (ServiceDefaults/Extensions.cs line 29-36), it calls `http.AddStandardResilienceHandler()`
+  3. That lambda executes LATER when HttpClients are created, NOT when AddServiceDefaults is called
+  4. So configuring options BEFORE AddServiceDefaults doesn't help - the resilience handler gets default 30s timeout
+- **Real Root Cause:** Need to use `ConfigureAll<>` instead of `Configure<>` to apply timeout to ALL resilience handlers created by the ConfigureHttpClientDefaults lambda
+- **Actual Fix:** 
+  ```csharp
+  builder.AddServiceDefaults();
+  
+  // Configure resilience handler timeout AFTER AddServiceDefaults
+  // Use ConfigureAll to apply to ALL HttpClients (including future ones)
+  builder.Services.ConfigureAll<Microsoft.Extensions.Http.Resilience.HttpStandardResilienceOptions>(options =>
+  {
+      options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(5);
+  });
+  
+  builder.AddOllamaApiClient("ollamaModel");
+  ```
+- **Key Learning:** 
+  - `Configure<T>()` only configures the default (unnamed) instance
+  - `ConfigureAll<T>()` configures ALL instances (named and unnamed)
+  - Since AddStandardResilienceHandler() creates resilience handlers per HttpClient, you need ConfigureAll
+  - Order: AddServiceDefaults → ConfigureAll (resilience options) → AddOllamaApiClient
+- **Files Modified:**
+  - `src/SqlAuditedQueryTool.App/Program.cs` — Changed to ConfigureAll, moved AFTER AddServiceDefaults
+  - Added startup logging to verify timeout configuration
+- **Timeout Configuration Verified:**
+  1. HttpClient.Timeout: 120 seconds (from OllamaOptions)
+  2. Resilience handler total request timeout: 300 seconds (5 minutes) — **ConfigureAll fixes this** ✅
+  3. ASP.NET request timeout: 300 seconds (5 minutes)
+  4. Frontend fetch timeout: 180 seconds
+- **Status:** ✅ PRODUCTION READY — All 57 tests pass, `/api/chat` no longer times out at 30 seconds

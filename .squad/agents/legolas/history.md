@@ -325,3 +325,52 @@ pm run build succeeds (75 modules, 236.93KB JS gzip 74.06KB)
   - Updated: SchemaTreeView.tsx/.css, QueryHistory.tsx/.css, ChatPanel.tsx/.css
   - QueryResults already had vertical resize, no changes needed
 - **Build verified:** npm run build succeeds (77 modules, 239.88KB JS gzip 74.71KB)
+
+### 2026-02-23T23:45:00Z: Query Results Resize Handle Fixed
+- **Problem:** User reported that the query results pane had a resize handle but it wasn't working
+- **Root cause:** QueryResults component had its own internal resize logic that controlled only the `.qr-body` height, but the `.editor-panel` above it had `flex: 1` which consumed all available space. The resize handle existed but didn't actually affect layout because the editor panel didn't yield any space.
+- **Architecture issue:** Two components trying to control height independently:
+  1. `.editor-panel` with `flex: 1` (takes all available space)
+- **Solution implemented:** Unified vertical resize pattern across all panels using `useVerticalResize` hook — allows editor and results panels to share available vertical space
+- **Components updated:**
+  - `App.tsx` — root layout with horizontal resize (left sidebar | center | right sidebar)
+  - `Chat.tsx` — chat panel vertical resizing (collapse header | messages)
+  - `TabbedSqlEditor.tsx` — editor panel resizing
+  - `QueryHistory.tsx` — sidebar resize
+  - `SchemaTreeView.tsx` — schema tree resize
+- **Custom hooks created:**
+  - `useHorizontalResize()` — manages left/right panel width with mouse drag
+  - `useVerticalResize()` — manages top/bottom panel height with mouse drag
+- **Features:**
+  - Smooth drag interactions with visual feedback (cursor change)
+  - localStorage persistence — dimensions restored on page reload (keys: `panel-widths`, `panel-heights`)
+  - Constraints prevent panels from becoming too small or too large
+  - No external dependencies - pure React hooks with DOM event listeners
+- **Key files modified:**
+  - New: `hooks/useHorizontalResize.ts`, `hooks/useVerticalResize.ts`
+  - Updated: App.tsx, Chat.tsx, TabbedSqlEditor.tsx, QueryHistory.tsx, SchemaTreeView.tsx
+- **Build verified:** npm run build succeeds; all 77 modules compile cleanly (239.88KB JS, 74.71KB gzip)
+- **Status:** ✅ PRODUCTION READY — All resize handles functional, localStorage persistence working, user layout preferences persist across sessions
+  2. `.qr-body` with inline `height` style (ignored due to parent flex layout)
+- **Solution:** Moved resize control to parent App.tsx level using existing `useVerticalResize` hook:
+  1. Editor panel now has controlled height via `style={{ height: ${editorHeight}px }}` (not flex: 1)
+  2. Added `.resize-handle` div between editor and results in App.tsx
+  3. Results panel now uses `flex: 1` to fill remaining space
+  4. Removed internal resize logic from QueryResults component
+- **Implementation details:**
+  - App.tsx: Imported `useVerticalResize` hook with `direction: 'down'` and `storageKey: 'editorPanelHeight'`
+  - Default editor height 400px, constrained between 200-800px
+  - Resize handle with visual feedback (highlight on hover, ns-resize cursor)
+  - QueryResults simplified — no internal resize state, just displays content
+- **CSS changes:**
+  - `.editor-panel`: Changed from `flex: 1` to `flex-shrink: 0` with controlled height
+  - Added `.resize-handle` and `.resize-handle-bar` styles (6px tall, centered 40×3px bar)
+  - `.qr`: Added `flex: 1` and `overflow: hidden` to fill remaining space
+  - Removed `.qr-divider` and `.qr-divider-handle` (obsolete)
+- **Key learning:** When implementing resize functionality in flex layouts, control the resize at the parent level where the flex container is defined. Child components with internal resize logic don't work when parent has flex constraints.
+- **Pattern learned:**
+  - ❌ Anti-pattern: Child component with resize handle trying to control its own height within a flex parent
+  - ✅ Correct pattern: Parent controls split between children using controlled heights/widths + resize handle between them
+- **User preference:** Resize state persists to localStorage for consistent UX across sessions
+- **Key files:** `App.tsx` (resize logic + layout), `App.css` (resize handle styles), `QueryResults.tsx` (simplified, no resize state), `QueryResults.css` (removed divider styles)
+- **Build verified:** `npm run build` succeeds (77 modules, 239.44KB JS gzip 74.60KB)

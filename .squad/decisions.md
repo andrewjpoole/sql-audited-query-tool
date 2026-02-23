@@ -360,3 +360,35 @@ builder.Services.Configure<Microsoft.Extensions.Http.Resilience.HttpStandardResi
 - Prevents accidental over-resize
 **Why:** Flexible layout control, user preferences persist across sessions.
 **Impact:** Users can customize UI layout; preferences persist via localStorage.
+
+### 2026-02-23T16:00:00Z: Ollama Timeout Fix (5th Attempt) — ConfigureAll Pattern — Gandalf
+**By:** Gandalf (Lead)
+**What:** Fixed persistent 30-second timeout on `/api/chat` (final resolution after 4 failed attempts). Root cause was `Configure<>` only configures default (unnamed) instance.
+**Root Cause (Corrected):**
+1. `AddServiceDefaults()` calls `ConfigureHttpClientDefaults` which registers a lambda
+2. That lambda executes LATER when HttpClients are created (not when AddServiceDefaults is called)
+3. `Configure<T>()` only configures default/unnamed instance
+4. Each HttpClient gets its own resilience handler instance
+5. Named client configuration doesn't work for options applied via `ConfigureHttpClientDefaults`
+**Solution:** Use `ConfigureAll<>` instead of `Configure<>` to apply configuration to ALL resilience handler instances:
+```csharp
+builder.AddServiceDefaults();
+
+builder.Services.ConfigureAll<Microsoft.Extensions.Http.Resilience.HttpStandardResilienceOptions>(options =>
+{
+    options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(5);
+});
+
+builder.AddOllamaApiClient("ollamaModel");
+```
+**Key Learning:**
+- `Configure<T>()` — only configures default/unnamed instance
+- `Configure<T>("name", ...)` — only configures specific named instance
+- `ConfigureAll<T>()` — configures ALL instances (current and future)
+- When using Aspire's `AddStandardResilienceHandler()` which creates per-client instances, you MUST use `ConfigureAll<>`
+**Configuration Order:**
+1. `AddServiceDefaults()` — registers ConfigureHttpClientDefaults lambda
+2. `ConfigureAll<HttpStandardResilienceOptions>()` — sets up global timeout config
+3. `AddOllamaApiClient("ollamaModel")` — registers named client
+4. HttpClient creation triggers lambda → applies ConfigureAll config
+**Impact:** All HttpClients (including Ollama) now respect 5-minute timeout. No more 30-second premature timeouts on long-running LLM operations. `/api/chat` tool calling loop fully functional.

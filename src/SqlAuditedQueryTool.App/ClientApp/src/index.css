@@ -1,0 +1,11 @@
+/* Minimal reset — App.css handles the actual styling */
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body, #root {
+  height: 100%;
+}
+

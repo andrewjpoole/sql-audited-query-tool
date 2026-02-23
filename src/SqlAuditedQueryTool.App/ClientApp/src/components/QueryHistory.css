@@ -1,0 +1,98 @@
+.qh {
+  position: relative;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-secondary);
+  border-right: 1px solid var(--border);
+  width: 260px;
+  min-width: 200px;
+}
+
+.qh-resize-handle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 4px;
+  height: 100%;
+  cursor: col-resize;
+  z-index: 10;
+  background: transparent;
+}
+
+.qh-resize-handle:hover {
+  background: var(--accent);
+}
+
+.qh-title {
+  padding: 8px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border);
+}
+
+.qh-list {
+  list-style: none;
+  flex: 1;
+  overflow-y: auto;
+}
+
+.qh-item {
+  padding: 8px 12px;
+  cursor: pointer;
+  border-bottom: 1px solid var(--border);
+  transition: background 0.1s;
+}
+
+.qh-item:hover {
+  background: rgba(14, 99, 156, 0.15);
+}
+
+.qh-item-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.qh-item-sql {
+  flex: 1;
+  font-size: 12px;
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
+  color: var(--text-primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.qh-item-badge {
+  font-size: 14px;
+  flex-shrink: 0;
+}
+
+.qh-item-badge--ai {
+  opacity: 0.9;
+}
+
+.qh-item-badge--user {
+  opacity: 0.8;
+}
+
+.qh-item-meta {
+  display: flex;
+  gap: 10px;
+  margin-top: 3px;
+  font-size: 11px;
+  color: var(--text-secondary);
+}
+
+.qh-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+  font-size: 13px;
+  padding: 16px;
+  text-align: center;
+}

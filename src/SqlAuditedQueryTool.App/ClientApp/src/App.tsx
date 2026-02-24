@@ -12,26 +12,22 @@ import { useChatHistory } from './hooks/useChatHistory';
 import { useVerticalResize } from './hooks/useVerticalResize';
 import './App.css';
 
-const DEFAULT_SQL = `-- Write your SQL query here
-SELECT TOP 100 *
-FROM 
-`;
-
 export default function App() {
-  const [sql, setSql] = useState(DEFAULT_SQL);
+  const [sql, setSql] = useState('');
 
-  // Query results state
-  const [queryResult, setQueryResult] = useState<QueryResult | null>(null);
+  // Query results state - now stored per tab
+  const [tabResults, setTabResults] = useState<Record<string, QueryResult | null>>({});
+  const [activeTabId, setActiveTabId] = useState<string>('default');
   const [queryLoading, setQueryLoading] = useState(false);
   const [queryError, setQueryError] = useState<string | null>(null);
   const [resultsCollapsed, setResultsCollapsed] = useState(false);
   
+  // Current tab's result
+  const queryResult = tabResults[activeTabId] || null;
+  
   // Ref to prevent duplicate executions during async operations
   const executingRef = useRef(false);
 
-  // Chat panel state
-  const [chatOpen, setChatOpen] = useState(false);
-  
   // Chat session management
   const {
     sessions,
@@ -44,10 +40,6 @@ export default function App() {
 
   // Query history state
   const [history, setHistory] = useState<HistoryEntry[]>([]);
-  const [historyOpen, setHistoryOpen] = useState(false);
-
-  // Connection status placeholder
-  const [connected] = useState(true);
 
   // Editor ref for text insertion
   const editorRef = useRef<SqlEditorHandle>(null);
@@ -69,6 +61,9 @@ export default function App() {
     const trimmed = sql.trim();
     if (!trimmed || executingRef.current) return;
 
+    // Get current active tab ID
+    const currentTabId = editorRef.current?.getActiveTabId() || 'default';
+
     executingRef.current = true;
     setQueryLoading(true);
     setQueryError(null);
@@ -82,7 +77,7 @@ export default function App() {
           console.log(`  Result set ${idx + 1}: ${rs.rowCount} rows, ${rs.columns.length} columns`);
         });
       }
-      setQueryResult(result);
+      setTabResults((prev) => ({ ...prev, [currentTabId]: result }));
       const totalRows = result.resultSets?.length
         ? result.resultSets.reduce((sum, rs) => sum + rs.rowCount, 0)
         : result.rowCount ?? 0;
@@ -97,7 +92,7 @@ export default function App() {
       ]);
     } catch (err) {
       setQueryError(err instanceof Error ? err.message : 'Query execution failed');
-      setQueryResult(null);
+      setTabResults((prev) => ({ ...prev, [currentTabId]: null }));
       setHistory((prev) => [
         ...prev,
         { sql: trimmed, timestamp: new Date().toISOString(), rowCount: null, source: 'user' },
@@ -112,6 +107,9 @@ export default function App() {
     const trimmed = selection.trim();
     if (!trimmed || executingRef.current) return;
 
+    // Get current active tab ID
+    const currentTabId = editorRef.current?.getActiveTabId() || 'default';
+
     executingRef.current = true;
     setQueryLoading(true);
     setQueryError(null);
@@ -125,7 +123,7 @@ export default function App() {
           console.log(`  Result set ${idx + 1}: ${rs.rowCount} rows, ${rs.columns.length} columns`);
         });
       }
-      setQueryResult(result);
+      setTabResults((prev) => ({ ...prev, [currentTabId]: result }));
       const totalRows = result.resultSets?.length
         ? result.resultSets.reduce((sum, rs) => sum + rs.rowCount, 0)
         : result.rowCount ?? 0;
@@ -140,7 +138,7 @@ export default function App() {
       ]);
     } catch (err) {
       setQueryError(err instanceof Error ? err.message : 'Query execution failed');
-      setQueryResult(null);
+      setTabResults((prev) => ({ ...prev, [currentTabId]: null }));
       setHistory((prev) => [
         ...prev,
         { sql: trimmed, timestamp: new Date().toISOString(), rowCount: null, source: 'user' },
@@ -162,13 +160,16 @@ export default function App() {
       queueMicrotask(async () => {
         if (executingRef.current) return;
         
+        // Get current active tab ID
+        const currentTabId = editorRef.current?.getActiveTabId() || 'default';
+        
         executingRef.current = true;
         setQueryLoading(true);
         setQueryError(null);
         setResultsCollapsed(false);
         try {
           const result = await executeQuery(newSql);
-          setQueryResult(result);
+          setTabResults((prev) => ({ ...prev, [currentTabId]: result }));
           const totalRows = result.resultSets?.length
             ? result.resultSets.reduce((sum, rs) => sum + rs.rowCount, 0)
             : result.rowCount ?? 0;
@@ -185,7 +186,7 @@ export default function App() {
           setQueryError(
             err instanceof Error ? err.message : 'Query execution failed',
           );
-          setQueryResult(null);
+          setTabResults((prev) => ({ ...prev, [currentTabId]: null }));
         } finally {
           setQueryLoading(false);
           executingRef.current = false;
@@ -201,8 +202,11 @@ export default function App() {
 
   // Handle AI-executed queries
   const handleAiExecutedQuery = useCallback((executedSql: string, result: QueryResult) => {
+    // Get current active tab ID
+    const currentTabId = editorRef.current?.getActiveTabId() || 'default';
+    
     editorRef.current?.setValue(executedSql);
-    setQueryResult(result);
+    setTabResults((prev) => ({ ...prev, [currentTabId]: result }));
     setResultsCollapsed(false);
     const totalRows = result.resultSets?.length
       ? result.resultSets.reduce((sum, rs) => sum + rs.rowCount, 0)
@@ -235,6 +239,11 @@ export default function App() {
     deleteSession(sessionId);
   }, [deleteSession]);
 
+  // Handle tab changes
+  const handleActiveTabChange = useCallback((tabId: string) => {
+    setActiveTabId(tabId);
+  }, []);
+
   return (
     <div className="app">
       <header className="app-header">
@@ -242,34 +251,10 @@ export default function App() {
         <span className="app-header-badge">Read-Only</span>
       </header>
 
-      <div className="toolbar">
-        <button
-          className="btn-toolbar"
-          onClick={() => setHistoryOpen((v) => !v)}
-          title="Toggle query history"
-        >
-          📋 History
-        </button>
-        <button
-          className="btn-toolbar"
-          onClick={() => setChatOpen((v) => !v)}
-          title="Toggle chat assistant"
-        >
-          💬 Chat
-        </button>
-        <span className="toolbar-spacer" />
-        <span className={`connection-dot ${connected ? 'connection-dot--ok' : 'connection-dot--err'}`} />
-        <span className="toolbar-hint">
-          {connected ? 'Connected' : 'Disconnected'}
-        </span>
-      </div>
-
       <div className="main-area">
         <SchemaTreeView onInsertText={handleInsertText} />
 
-        {historyOpen && (
-          <QueryHistory entries={history} onSelect={handleHistorySelect} />
-        )}
+        <QueryHistory entries={history} onSelect={handleHistorySelect} />
 
         <div className="center-area">
           <div className="editor-panel" style={{ height: `${editorHeight}px` }}>
@@ -279,6 +264,7 @@ export default function App() {
               onChange={setSql} 
               onExecute={handleExecute}
               onExecuteSelection={handleExecuteSelection}
+              onActiveTabChange={handleActiveTabChange}
             />
           </div>
 
@@ -298,8 +284,6 @@ export default function App() {
         </div>
 
         <ChatPanel
-          open={chatOpen}
-          onClose={() => setChatOpen(false)}
           onInsertSql={handleInsertSql}
           onInsertAndExecute={handleInsertAndExecute}
           onAiExecutedQuery={handleAiExecutedQuery}

@@ -1,4 +1,4 @@
-import { useState, useCallback, useImperativeHandle, forwardRef } from 'react';
+import { useState, useCallback, useImperativeHandle, forwardRef, useEffect, useRef } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
 import { v4 as uuidv4 } from 'uuid';
@@ -9,6 +9,7 @@ export interface SqlEditorHandle {
   setValue: (text: string) => void;
   executeQuery: () => void;
   executeSelection: () => void;
+  getActiveTabId: () => string;
 }
 
 interface SqlEditorProps {
@@ -16,6 +17,7 @@ interface SqlEditorProps {
   onChange: (value: string) => void;
   onExecute: () => void;
   onExecuteSelection: (selection: string) => void;
+  onActiveTabChange?: (tabId: string) => void;
 }
 
 interface QueryTab {
@@ -40,9 +42,10 @@ function insertText(editor: Monaco.editor.ICodeEditor, text: string) {
   editor.focus();
 }
 
-const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function TabbedSqlEditor({ value, onChange, onExecute, onExecuteSelection }, ref) {
+const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function TabbedSqlEditor({ value, onChange, onExecute, onExecuteSelection, onActiveTabChange }, ref) {
   const [editorRef, setEditorRef] = useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const [monacoRef, setMonacoRef] = useState<typeof Monaco | null>(null);
+  const completionDisposableRef = useRef<Monaco.IDisposable | null>(null);
   
   const [tabs, setTabs] = useState<QueryTab[]>([
     {
@@ -90,11 +93,87 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
         onExecute();
       }
     },
+    getActiveTabId() {
+      return activeTabId;
+    },
   }));
+
+  // Cleanup completion provider on unmount
+  useEffect(() => {
+    return () => {
+      if (completionDisposableRef.current) {
+        completionDisposableRef.current.dispose();
+      }
+    };
+  }, []);
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     setEditorRef(editor);
     setMonacoRef(monaco);
+
+    // Register schema completion provider
+    const completionDisposable = monaco.languages.registerCompletionItemProvider('sql', {
+      triggerCharacters: ['.', ' '],
+      provideCompletionItems: async (
+        model: Monaco.editor.ITextModel,
+        position: Monaco.Position
+      ) => {
+        try {
+          // Get text before cursor for context
+          const textUntilPosition = model.getValueInRange({
+            startLineNumber: 1,
+            startColumn: 1,
+            endLineNumber: position.lineNumber,
+            endColumn: position.column,
+          });
+
+          // Get current line for additional context
+          const currentLine = model.getLineContent(position.lineNumber);
+
+          // Call backend completion API
+          const response = await fetch('/api/completions/schema', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              prefix: textUntilPosition,
+              context: currentLine,
+              cursorLine: position.lineNumber,
+            }),
+          });
+
+          if (!response.ok) {
+            // Graceful degradation - return empty on error
+            return { suggestions: [] };
+          }
+
+          const completions = await response.json();
+
+          // Transform backend response to Monaco completion items
+          const suggestions = completions.map((item: any) => ({
+            label: item.label,
+            kind: item.kind || monaco.languages.CompletionItemKind.Field,
+            insertText: item.insertText || item.label,
+            detail: item.detail,
+            documentation: item.documentation,
+            range: {
+              startLineNumber: position.lineNumber,
+              startColumn: position.column,
+              endLineNumber: position.lineNumber,
+              endColumn: position.column,
+            },
+          }));
+
+          return { suggestions };
+        } catch (error) {
+          // Graceful degradation - silently fail and return empty
+          console.debug('Completion provider error:', error);
+          return { suggestions: [] };
+        }
+      },
+    });
+
+    // Store disposable for cleanup
+    completionDisposableRef.current = completionDisposable;
 
     const CONTEXT_GROUP = '9_sql_helpers';
 
@@ -241,7 +320,7 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
       id: uuidv4(),
       name: `Query ${newTabNumber}`,
       path: `query-${newTabNumber}.sql`,
-      defaultValue: `-- Write your SQL query here\nSELECT TOP 100 *\nFROM `,
+      defaultValue: '',
       isDirty: false,
     };
     setTabs((prev) => [...prev, newTab]);
@@ -266,7 +345,7 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
           id: 'default',
           name: 'Query 1',
           path: 'query-1.sql',
-          defaultValue: `-- Write your SQL query here\nSELECT TOP 100 *\nFROM `,
+          defaultValue: '',
           isDirty: false,
         }];
       }
@@ -294,12 +373,13 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
     }
     
     setActiveTabId(tabId);
+    onActiveTabChange?.(tabId);
     
     // Focus editor after tab switch
     setTimeout(() => {
       editorRef?.focus();
     }, 0);
-  }, [editorRef, monacoRef, onChange]);
+  }, [editorRef, monacoRef, onChange, onActiveTabChange]);
 
   const handleRenameTab = useCallback((tabId: string, e: React.MouseEvent) => {
     e.stopPropagation();
@@ -350,7 +430,7 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
         <button className="btn-execute-toolbar" onClick={onExecute} title="Execute Query (F7)">
           ▶ Execute
         </button>
-        <button className="btn-execute-toolbar btn-execute-toolbar--secondary" onClick={() => {
+        <button className="btn-execute-toolbar" onClick={() => {
           if (!editorRef) return;
           const selection = editorRef.getSelection();
           if (!selection) return;
@@ -385,6 +465,8 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
             padding: { top: 8 },
             suggestOnTriggerCharacters: true,
             tabSize: 4,
+            quickSuggestions: false,
+            wordBasedSuggestions: 'off',
           }}
         />
       </div>

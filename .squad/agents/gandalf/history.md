@@ -11,6 +11,25 @@
 ## Learnings
 <!-- Append new learnings below this line -->
 
+### 2026-02-23: Execution Plan Feature — Architecture Designed
+- **Request:** Andrew asked for SQL execution plans with a checkbox next to execute buttons
+- **Decision:** Use `SET STATISTICS XML ON` (actual plans, not estimated) — executes query AND returns plan as additional result set
+- **Why not `SET SHOWPLAN_XML ON`:** That returns estimated plan only and does NOT execute the query — user wants both results and plan together
+- **Plan Detection:** SQL Server appends plan XML as last result set (single row, single column starting with `<ShowPlanXML`). Executor already loops via `reader.NextResultAsync()` — detect and extract.
+- **UI Design:**
+  - Checkbox "Show Plan" in `editor-toolbar` between execute buttons and tab controls
+  - Plan displayed as dedicated tab in QueryResults panel: `[Result Set 1] [📊 Execution Plan]`
+  - Two sub-views: Visual (using `html-query-plan` npm package) and Raw XML with copy button
+  - Checkbox state persisted to localStorage
+- **Audit Decision:** Do NOT post plan XML to GitHub issues (too large, schema-level info only). Log boolean flag `IncludedExecutionPlan` in audit/history entries.
+- **Security:** Plans expose schema-level info (table/index names, join strategies) — same as SchemaTreeView already exposes. No new security boundary.
+- **Performance:** Opt-in only (checkbox off by default), ~5-10% execution overhead when on, plan XML transmitted as single string field
+- **Model Changes:** `QueryRequest.IncludeExecutionPlan`, `QueryResult.ExecutionPlanXml`
+- **New Component:** `ExecutionPlanView.tsx` — renders SQL Server XML showplans
+- **New Dependency:** `html-query-plan` npm package (lightweight, zero-dependency, renders SSMS-style plan diagrams)
+- **Proposal:** `.squad/decisions/inbox/gandalf-execution-plan-feature.md`
+- **Andrew Preference:** Checkbox near execute buttons for toggling plan capture
+
 ### 2025-07-24: Project Structure Established
 - **Solution:** `SqlAuditedQueryTool.sln` at repo root
 - **Target Framework:** net9.0 (using .NET 10 SDK)
@@ -182,6 +201,32 @@
   3. ASP.NET request timeout: 300 seconds (5 minutes)
   4. Frontend fetch timeout: 180 seconds
 - **Status:** ✅ PRODUCTION READY — All 57 tests pass, `/api/chat` no longer times out at 30 seconds
+
+### 2026-02-23: Ollama Embeddings for Monaco — Architecture Designed
+- **Request:** Andrew asked for Ollama embeddings in Monaco editor
+- **Decision:** Phased approach — all three options (schema completions, inline suggestions, semantic search) are complementary
+- **Embedding Model:** `nomic-embed-text` (768-dim, 137M params, fast local inference ~10-20ms)
+- **Vector Store:** In-memory (`InMemoryVectorStore`) for Phase 1-2, optional Qdrant for scale
+- **Monaco Integration:**
+  - Phase 1: `CompletionItemProvider` for schema-aware autocomplete (table.column dot notation)
+  - Phase 2: `InlineCompletionsProvider` for ghost-text query suggestions from history (like Copilot)
+  - Phase 3: Semantic search panel over query history by natural language intent
+- **Aspire Change:** Add second Ollama model resource `ollamaEmbed` for `nomic-embed-text`
+- **New Interfaces:** `IEmbeddingService`, `IVectorStore`, `ICompletionService` in Core
+- **New Services:** `OllamaEmbeddingService`, `InMemoryVectorStore`, `EmbeddingCompletionService` in Llm
+- **New Endpoints:** `/api/completions/schema`, `/api/completions/inline`, `/api/completions/search`
+- **Data Embedded:** Schema metadata (tables, columns, relationships), query history (on execution), SQL patterns
+- **Performance Budget:** <100ms for completions, <300ms for inline suggestions
+- **Security:** No row data embedded, backend-only similarity search, graceful degradation
+- **Key Files:**
+  - Proposal: `.squad/decisions/inbox/gandalf-ollama-embeddings-monaco.md`
+  - Monaco editor: `src/SqlAuditedQueryTool.App/ClientApp/src/components/SqlEditor.tsx`
+  - Monaco tabs: `src/SqlAuditedQueryTool.App/ClientApp/src/components/TabbedSqlEditor.tsx`
+  - LLM config: `src/SqlAuditedQueryTool.Llm/Configuration/OllamaOptions.cs`
+  - Schema provider: `src/SqlAuditedQueryTool.Llm/Services/SchemaMetadataProvider.cs`
+  - AppHost: `src/SqlAuditedQueryTool.AppHost/`
+- **Current State:** Monaco has NO custom completion providers — only built-in SQL keywords
+- **Andrew Preference:** Local-only processing is fine (data never leaves infrastructure)
 
 ### 2026-02-23: ConfigureAll Fix Verification ✅ CONFIRMED IN CODE
 - **Task:** Verify that Program.cs has ConfigureAll (not Configure) applied

@@ -46,7 +46,12 @@ public sealed class OllamaLlmService : ILlmService
 
         _logger.LogDebug("Sending chat request to Ollama model {Model}", _options.Model);
 
-        var response = await _client.GetResponseAsync(messages, cancellationToken: cancellationToken);
+        var chatOptions = new ChatOptions
+        {
+            ModelId = _options.Model
+        };
+
+        var response = await _client.GetResponseAsync(messages, chatOptions, cancellationToken: cancellationToken);
         
         // Extract tool calls if present (currently returns empty list)
         var toolCalls = ExtractToolCalls(response);
@@ -67,7 +72,12 @@ public sealed class OllamaLlmService : ILlmService
     {
         var messages = BuildMessages(request);
 
-        await foreach (var update in _client.GetStreamingResponseAsync(messages, cancellationToken: cancellationToken))
+        var chatOptions = new ChatOptions
+        {
+            ModelId = _options.Model
+        };
+
+        await foreach (var update in _client.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
         {
             if (update.Text is { Length: > 0 } content)
                 yield return content;

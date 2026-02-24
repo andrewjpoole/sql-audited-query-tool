@@ -404,3 +404,150 @@ pm run build succeeds (75 modules, 236.93KB JS gzip 74.06KB)
   - Position vertical handles at bottom of panel with `direction: 'down'` for intuitive drag behavior
 - **Key files:** App.tsx, App.css, QueryHistory.tsx, QueryHistory.css
 - **Build verified:** `npm run build` succeeds (77 modules, 239.76KB JS gzip 74.64KB)
+
+## 2026-02-23 - Monaco Tab-Based Result Tracking
+
+**Task:** Fix Monaco tab tracking and stack result sets vertically (SSMS-style)
+
+**Problem:**
+1. When users opened multiple Monaco tabs, query results were global (not per-tab). Switching tabs showed the most recent result regardless of which tab executed it.
+2. Multiple result sets from a single query showed as tabs instead of stacking vertically like SQL Server Management Studio.
+
+**Solution Implemented:**
+
+1. **Per-Tab Result Storage:**
+   - Changed App.tsx from single queryResult state to 	abResults: Record<string, QueryResult | null> mapping tab IDs to results
+   - Added ctiveTabId state and handleActiveTabChange callback
+   - Modified all execute handlers (handleExecute, handleExecuteSelection, handleInsertAndExecute, handleAiExecutedQuery) to:
+     - Get current tab ID via ditorRef.current?.getActiveTabId()
+     - Store results in 	abResults[currentTabId]
+   - Results now track with tabs—switching tabs shows that tab's last result
+
+2. **Vertical Result Set Stacking:**
+   - Removed tab UI for multiple result sets in QueryResults.tsx
+   - Changed layout to vertical stacking with qr-content--stacked class
+   - Each result set wrapped in qr-result-set div with optional header showing "Result Set N (X rows)"
+   - CSS: Added gap between sets, borders, max-height per set (400px), individual scrolling
+
+3. **TabbedSqlEditor Updates:**
+   - Added getActiveTabId() to SqlEditorHandle interface
+   - Added onActiveTabChange?: (tabId: string) => void prop
+   - handleTabClick now calls onActiveTabChange?.(tabId) to notify parent
+
+**Files Modified:**
+- src/SqlAuditedQueryTool.App/ClientApp/src/App.tsx - Per-tab result tracking
+- src/SqlAuditedQueryTool.App/ClientApp/src/components/TabbedSqlEditor.tsx - Tab change notifications
+- src/SqlAuditedQueryTool.App/ClientApp/src/components/QueryResults.tsx - Vertical stacking layout
+- src/SqlAuditedQueryTool.App/ClientApp/src/components/QueryResults.css - Stacking styles
+
+**Key Patterns:**
+- Results keyed by tab ID (UUID from Monaco model path)
+- Active tab ID flows: TabbedSqlEditor → App (via callback) → used for result lookup
+- Default tab ID: 'default' (fallback)
+- Result sets display: Vertical stack with individual scroll areas
+
+**User Experience:**
+- Users can now work with multiple query tabs independently—each tab retains its own results
+- Switching between tabs shows the correct results for each tab
+- Multiple result sets from batched queries (e.g., SELECT 1; SELECT 2;) stack vertically like SSMS
+- Each result set scrollable independently, bounded at 400px height
+
+### 2026-02-23T22:45:00Z: Query History Empty State & New Tab Default Value Cleanup
+- **Problem 1 - Hidden resize handle:** Query history pane resize handles were invisible when no queries had been executed yet
+  - **Root cause:** Component returned early with empty message when `entries.length === 0` (line 42-46 in QueryHistory.tsx), so the wrapping div with resize handles never rendered
+  - **Solution:** Removed early return pattern; now always renders the full component structure (title bar, resize handles, content area) regardless of entry count
+  - **Implementation:** Changed from early return to conditional rendering inside the component tree — empty message appears within the panel instead of replacing it
+  - **Impact:** Both horizontal and vertical resize handles are now visible and functional even when history is empty, improving discoverability and consistent UX
+- **Problem 2 - Sample SQL in new tabs:** Clicking "+" to create new tabs populated them with placeholder SQL (`-- Write your SQL query here\nSELECT TOP 100 *\nFROM `)
+  - **Root cause:** Three places set default SQL content:
+    1. `App.tsx` line 15-18: `DEFAULT_SQL` constant used to initialize first tab
+    2. `TabbedSqlEditor.tsx` line 249: `handleNewTab()` set `defaultValue` to sample SQL
+    3. `TabbedSqlEditor.tsx` line 274: `handleCloseTab()` reset to default tab with sample SQL when closing last tab
+  - **Solution:** Changed all default values to empty strings (`''`)
+    - Removed `DEFAULT_SQL` constant entirely from `App.tsx`
+    - Changed `useState` initialization from `useState(DEFAULT_SQL)` to `useState('')`
+    - Updated `defaultValue: ''` in both `handleNewTab()` and `handleCloseTab()` fallback tab creation
+  - **Impact:** All new tabs (via "+" button or closing last tab) now start completely empty, giving users a clean slate without placeholder text
+- **User preference:** Andrew prefers empty editors for new tabs rather than template/sample SQL
+- **Key files:** 
+  - `QueryHistory.tsx` — changed from early return to conditional content rendering
+  - `TabbedSqlEditor.tsx` — removed sample SQL from `defaultValue` in two functions
+  - `App.tsx` — removed `DEFAULT_SQL` constant and changed initial state to empty string
+- **Build verified:** `npm run build` succeeds (77 modules, 239.99KB JS gzip 74.65KB)
+
+### 2026-02-24T12:00:00Z: Panel Layout Simplification — Always-Visible Chat & History
+- **Problem:** User wanted query history pane to be full height (no vertical resize) and both chat/history panels to always be visible (no toggle buttons)
+- **Requirements:**
+  1. Query history pane should span full container height with only horizontal (width) resizing
+  2. Chat window and query history should always be open — remove toggle buttons from toolbar
+- **Solution Implemented:**
+  1. **Removed vertical resize from QueryHistory:**
+     - Removed `useVerticalResize` import and hook from QueryHistory.tsx
+     - Removed `height` style and vertical resize handle elements
+     - Component now uses CSS `height: 100%` to fill container, only horizontal resize via right edge handle
+     - Removed `.qh-resize-handle-vertical` and `.qh-resize-handle-bar` CSS rules from QueryHistory.css
+  2. **Removed toggle buttons:**
+     - Removed `chatOpen` and `historyOpen` state from App.tsx
+     - Removed "📋 History" and "💬 Chat" toggle buttons from toolbar
+     - Removed conditional rendering — `{historyOpen && <QueryHistory.../>}` changed to always render `<QueryHistory.../>`
+     - Removed `open` and `onClose` props from ChatPanel interface and component
+     - Removed close button (✕) from chat header in ChatPanel.tsx
+     - Removed `if (!open) return null;` guard from ChatPanel rendering
+  3. **UI Changes:**
+     - Toolbar now only shows connection status (right-aligned) — much cleaner
+     - Main area layout is now fixed three-column: SchemaTreeView | QueryHistory | center-area | ChatPanel
+     - Both sidebar panels always visible, users control widths via horizontal resize handles
+- **User Preference:** Andrew prefers persistent panels over toggleable ones — simplifies UI, eliminates the need to hunt for hidden panels
+- **Key Pattern:** Full-height sidebars with horizontal-only resize is more common in database tools (Azure Data Studio, SSMS) vs fully resizable floating panels
+- **Files Modified:**
+  - `QueryHistory.tsx` — removed vertical resize logic, simplified to full-height component
+  - `QueryHistory.css` — removed vertical resize handle styles
+  - `App.tsx` — removed toggle state/buttons, always render panels, removed ChatPanel `open`/`onClose` props
+  - `ChatPanel.tsx` — removed `open`/`onClose` props and close button from header
+- **Build verified:** `npm run build` succeeds (77 modules, 239.20KB JS gzip 74.52KB)
+
+
+
+### 2026-02-23T20:34:19Z: Execute/Run Selection Button Styling Consistency
+- **Issue:** Execute (F7) and Run Selection (F8) buttons had inconsistent visual styling — Execute was accent-colored (blue/prominent) while Run Selection was gray/muted
+- **Root cause:** Run Selection button at line 359 had tn-execute-toolbar--secondary class modifier that applied gray background and removed hover effects
+- **Solution:** Removed tn-execute-toolbar--secondary class from Run Selection button, keeping only tn-execute-toolbar (same as Execute button)
+- **Files changed:** TabbedSqlEditor.tsx line 359
+- **Impact:** Both buttons now have identical visual appearance — same accent color background, same hover effects (lift + shadow), same visual weight. Users requested consistency because both are primary query execution actions.
+- **Key pattern:** In editor toolbar, both execute actions should have equal visual prominence since they're both primary actions with keyboard shortcuts
+
+### 2026-02-23T20:44:05Z: Removed Connection Status Bar
+- **Task:** Removed redundant connection status toolbar that displayed "Connected" indicator with green dot
+- **Rationale:** Schema section visibility already indicates active database connection, making the status bar redundant
+- **Changes made:**
+  1. Removed toolbar div (lines 257-263) from App.tsx containing connection-dot and "Connected/Disconnected" text
+  2. Removed connected state variable (line 45) from App.tsx — no longer needed
+  3. Removed all toolbar-related CSS from App.css:
+     - .toolbar (flex container styles)
+     - .btn-toolbar (unused toolbar button styles)
+     - .toolbar-spacer (flex spacer)
+     - .toolbar-hint (text label styles)
+     - .connection-dot (circle indicator base styles)
+     - .connection-dot--ok (green success state)
+     - .connection-dot--err (red error state)
+- **UI improvement:** Cleaner header layout — just title and "Read-Only" badge, no redundant status information
+- **Key learning:** UI elements should provide unique value; if information is already indicated elsewhere (schema tree visibility = connected), status indicators are redundant
+- **User preference:** Andrew prefers minimal UI with no duplicate information displays
+- **Files modified:** App.tsx, App.css
+- **Build verified:** `npm run build` succeeds (77 modules, 238.87KB JS gzip 74.44KB)
+
+### 2026-02-23T22:23:43Z: Monaco Completion Provider Implementation
+- **Feature:** Implemented Phase 1 Monaco schema completion provider for intelligent SQL autocomplete
+- **Architecture:** Follows gandalf-ollama-embeddings-monaco.md design proposal — frontend CompletionItemProvider calls /api/completions/schema endpoint
+- **Implementation location:** TabbedSqlEditor.tsx (Monaco is initialized here, not in SqlEditor.tsx)
+- **Registration:** Added monaco.languages.registerCompletionItemProvider('sql', {...}) in handleMount callback
+- **Trigger characters:** ['.', ' '] — triggers on dot notation and space (also supports manual Ctrl+Space)
+- **Request payload:** Sends prefix (all text before cursor), context (current line), cursorLine (position) to backend
+- **Response transformation:** Maps backend completion items to monaco.languages.CompletionItem format with label, kind, insertText, detail, documentation, range
+- **Error handling:** Graceful degradation — returns empty suggestions array if API fails, logs to console.debug (not visible to users)
+- **Memory management:** Stored completion disposable in completionDisposableRef, added useEffect cleanup to dispose on unmount
+- **Key pattern:** Monaco providers register once on mount, live for component lifetime, must be disposed to prevent memory leaks
+- **Dependencies:** Samwise building /api/completions/schema endpoint, Radagast building embedding service — frontend ready for integration
+- **Files modified:** TabbedSqlEditor.tsx (added imports: useEffect, useRef; added ref, registration, cleanup)
+- **No TypeScript errors:** Uses correct Monaco types (Monaco.IDisposable, monaco.languages.CompletionItemKind.Field)
+- **User experience:** Once backend is ready, users will see schema-aware completions when typing SQL queries — appears automatically on '.' and space, or via Ctrl+Space

@@ -33,8 +33,6 @@ function formatTimestamp(iso: string): string {
 }
 
 interface ChatPanelProps {
-  open: boolean;
-  onClose: () => void;
   onInsertSql: (sql: string) => void;
   onInsertAndExecute: (sql: string) => void;
   onAiExecutedQuery?: (sql: string, result: QueryResult) => void;
@@ -47,8 +45,6 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({
-  open,
-  onClose,
   onInsertSql,
   onInsertAndExecute,
   onAiExecutedQuery,
@@ -142,16 +138,11 @@ export default function ChatPanel({
     }
   };
 
-  if (!open) return null;
-
   return (
     <div className="chat" style={{ width: `${width}px` }}>
       <div className="chat-resize-handle" onMouseDown={handlePanelResize} />
       <div className="chat-header">
         <span className="chat-header-title">💬 Chat Assistant</span>
-        <button className="chat-header-close" onClick={onClose} title="Close chat">
-          ✕
-        </button>
       </div>
 
       {/* Chats section */}

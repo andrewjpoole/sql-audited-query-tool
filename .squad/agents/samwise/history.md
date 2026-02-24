@@ -123,3 +123,93 @@
   3. ASP.NET Core request timeout: 300s (safety net for the entire request)
 - **Key lesson learned:** When debugging timeout issues, check **ALL layers** of the stack systematically, including the client-side fetch timeout. Don't assume the backend is the problem. The timeout that fires first is the one that matters, and in this case it was the frontend layer that was too aggressive.
 - **File modified:** `src\SqlAuditedQueryTool.App\ClientApp\src\api\queryApi.ts` - changed default `timeoutMs` parameter from 60000 to 180000.
+
+### 2026-02-23T19:30:00Z: Ollama Embeddings Integration — Phase 1 Backend
+**By:** Samwise (Backend)
+**What:** Implemented Phase 1 backend infrastructure for Ollama embeddings integration supporting Monaco SQL autocomplete.
+**Changes:**
+1. **Aspire AppHost:** Added `nomic-embed-text` embedding model resource as `ollamaEmbed`, referenced by the main app alongside the chat model.
+2. **Core model:** Created `CompletionContext` record in `Core/Models/Llm/` accepting `Prefix`, `Context`, and `CursorLine` for editor context.
+3. **API endpoint:** Added `POST /api/completions/schema` endpoint accepting `CompletionContext`. Returns empty array initially (placeholder implementation).
+**Architecture:** Follows gandalf-ollama-embeddings-monaco.md proposal. Endpoint is ready for Radagast to wire the embedding service implementation.
+**Key files:**
+- `SqlAuditedQueryTool.AppHost\AppHost.cs` — embedding model registration
+- `src\SqlAuditedQueryTool.Core\Models\Llm\CompletionContext.cs` — completion context model
+- `src\SqlAuditedQueryTool.App\Program.cs` — completions endpoint
+**Next steps:** Radagast implements `IEmbeddingService`, `IVectorStore`, and wires the completion service to populate schema-based autocomplete suggestions.
+**Pattern:** Placeholder endpoint allows parallel development — frontend can start integrating Monaco CompletionItemProvider while backend embedding service is being built.
+
+### 2026-02-23: Chat Model Configuration Fix — Multiple Named Ollama Clients (UPDATED)
+**Problem 1 (Original):** After adding embeddings (nomic-embed-text), chat endpoint started failing with error: "nomic-embed-text does not support chat". The chat service was using the wrong Ollama model.
+**Root cause 1:** When Aspire registers multiple named `IOllamaApiClient` instances via `AddOllamaApiClient("ollamaModel")` and `AddOllamaApiClient("ollamaEmbed")`, using `GetRequiredService<IOllamaApiClient>()` returns the LAST registered client. 
+**First fix (FAILED):** Changed to use `IHttpClientFactory.CreateClient("ollamaModel")` and construct `OllamaApiClient` manually. This FAILED because the manually created HttpClient doesn't have the base address configured.
+**Problem 2 (HttpClient base address):** When constructing `OllamaApiClient` from `httpClientFactory.CreateClient("ollamaModel")`, the HttpClient doesn't have a base address set, causing error: "HttpClient base address is not set!" at construction time.
+**Root cause 2:** `AddOllamaApiClient()` configures the HttpClient with the base address internally, but when you bypass this and manually construct the HttpClient via CreateClient, it doesn't get the Ollama endpoint URL.
+**Final fix:** Use `GetServices<IOllamaApiClient>()` to get ALL registered IOllamaApiClient instances, then select by index:
+```csharp
+builder.Services.AddScoped<IChatClient>(sp =>
+{
+    var allOllamaClients = sp.GetServices<IOllamaApiClient>().ToList();
+    // First registered is ollamaModel (chat), second is ollamaEmbed (embeddings)
+    var chatClient = allOllamaClients[0];
+    return (IChatClient)chatClient;
+});
+```
+**Key lesson:** When using multiple named Aspire Ollama clients:
+- `GetRequiredService<IOllamaApiClient>()` returns the LAST registered client (wrong for multi-model)
+- `IHttpClientFactory.CreateClient("<name>")` + manual `OllamaApiClient` construction FAILS because base address isn't set
+- `GetServices<IOllamaApiClient>()` returns ALL clients in registration order - select by index to get the specific model
+**Files modified:** `src\SqlAuditedQueryTool.App\Program.cs` — IChatClient registration now uses `GetServices<>()` to select first client.
+**Pattern:** For multi-model Ollama scenarios with Aspire, use `GetServices<IOllamaApiClient>()` and select by index based on registration order.
+
+### 2026-02-23: Chat Timeout Fix — IChatClient Default 10-Second Timeout
+**Problem:** After embeddings integration, chat endpoint started timing out again with error: "The operation didn't complete within the allowed timeout of '00:00:10'." This occurred even though the Ollama HttpClient timeout (120s), ASP.NET Core request timeout (300s), and resilience handler timeout (300s) were all properly configured.
+**Root cause:** Microsoft.Extensions.AI's `IChatClient.GetResponseAsync()` and `GetStreamingResponseAsync()` methods use a **default 10-second timeout** when no `ChatOptions` parameter is provided. The service was calling these methods with only `messages` and `cancellationToken`, bypassing the configured HttpClient timeout.
+**Fix:** Modified `OllamaLlmService.ChatAsync()` and `StreamChatAsync()` to pass `ChatOptions` with the model ID to all IChatClient calls:
+```csharp
+var chatOptions = new ChatOptions
+{
+    ModelId = _options.Model
+};
+var response = await _client.GetResponseAsync(messages, chatOptions, cancellationToken: cancellationToken);
+```
+**Impact:** Chat requests now properly respect the HttpClient timeout configuration (120s) instead of failing at the 10-second IChatClient default. The timeout chain is now:
+1. **Frontend fetch:** 180s (client-side abort)
+2. **IChatClient:** Respects HttpClient timeout (120s per LLM call)
+3. **HttpClient:** 120s (configured via OllamaOptions.ChatTimeoutSeconds)
+4. **ASP.NET Core request:** 300s (server-side safety net)
+5. **Resilience handler:** 300s (total request timeout)
+**Key lesson:** When using Microsoft.Extensions.AI's IChatClient abstraction, **always provide ChatOptions** to avoid the 10-second default timeout. The ChatOptions parameter is required to properly configure model selection and inherit the underlying HttpClient timeout settings. Without it, requests will timeout prematurely regardless of HttpClient configuration.
+**Files modified:** `src\SqlAuditedQueryTool.Llm\Services\OllamaLlmService.cs` — both ChatAsync and StreamChatAsync methods now pass ChatOptions.
+**Pattern:** For all IChatClient.GetResponseAsync/GetStreamingResponseAsync calls: `await _client.GetResponseAsync(messages, chatOptions, cancellationToken)` NOT `await _client.GetResponseAsync(messages, cancellationToken)`.
+
+### 2026-02-24: Chat 404 Error — App Must Run via Aspire AppHost
+**Problem:** User reported "Error: Response status code does not indicate success: 404 (Not Found)" when using the chat interface.
+**Investigation findings:**
+1. Frontend (Vite on port 5173) was running, calling `/api/chat` endpoint
+2. Backend App was NOT running on port 5001 (checked via Get-NetTCPConnection)
+3. Ollama was NOT running on port 11434 (connection refused)
+4. SQL Server WAS running on port 44444 (via Aspire container)
+5. The `/api/chat` endpoint IS defined in `Program.cs` line 187
+**Root cause:** User is running the app OUTSIDE of Aspire orchestration. The application architecture requires Aspire AppHost to:
+- Start the backend App on port 5001
+- Start Ollama container with models (qwen2.5-coder:7b and nomic-embed-text)
+- Wire service discovery between App and Ollama
+- Manage container lifecycle and dependencies
+**Architecture constraint:** The app uses Aspire's `AddOllamaApiClient()` which depends on Aspire service discovery to resolve the Ollama endpoint. When the App runs directly (e.g., `dotnet run` in App project), the Ollama client has no valid endpoint and requests fail with 404.
+**Proper startup procedure:**
+1. Start the AppHost project: `dotnet run --project SqlAuditedQueryTool.AppHost`
+2. Aspire dashboard will launch (typically https://localhost:17XXX)
+3. AppHost will orchestrate: SQL Server container → Ollama container → App → Frontend
+4. All dependencies and service discovery are automatically wired
+**Alternative for quick testing (if Aspire is not needed):**
+- Run local Ollama: `ollama serve` (starts on port 11434)
+- Update App's configuration to point to localhost Ollama
+- Run App directly: `dotnet run --project src\SqlAuditedQueryTool.App`
+- However, this bypasses Aspire's benefits (container management, telemetry, service discovery)
+**Key lesson:** Applications using Aspire resource orchestration (containers, service discovery) MUST be started through the AppHost, not by running individual projects. The AppHost is the composition root. Direct project execution will fail with dependency resolution errors (404, connection refused, missing services).
+**Files referenced:**
+- `SqlAuditedQueryTool.AppHost\AppHost.cs` — Aspire orchestration configuration
+- `src\SqlAuditedQueryTool.App\Program.cs` — App depends on Aspire-registered services
+**Pattern:** For Aspire-based solutions, always start via `dotnet run --project <AppHost>`, never via individual project execution.
+

@@ -91,6 +91,32 @@
   flex-direction: column;
 }
 
+.qr-content--stacked {
+  gap: 16px;
+  padding: 8px;
+}
+
+.qr-result-set {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.qr-result-set-header {
+  background: var(--bg-tertiary);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-primary);
+}
+
+.qr-result-set .qr-table-wrap {
+  max-height: 400px;
+}
+
 .qr-tabs {
   display: flex;
   gap: 2px;

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import type { QueryResult, QueryResultSet } from '../api/queryApi';
 import './QueryResults.css';
 
@@ -30,7 +30,6 @@ export default function QueryResults({
     column: null,
     direction: 'asc',
   });
-  const [activeTab, setActiveTab] = useState(0);
 
   // Normalize result to always work with resultSets array
   const resultSets: QueryResultSet[] = result
@@ -74,16 +73,17 @@ export default function QueryResults({
     });
   };
 
-  // Reset active tab when result changes
-  useEffect(() => {
-    setActiveTab(0);
-  }, [result]);
-
   const renderResultSet = (resultSet: QueryResultSet, index: number) => {
     const sortedRows = getSortedRows(resultSet, index);
     return (
-      <div key={index} className="qr-table-wrap">
-        <table className="qr-table">
+      <div key={index} className="qr-result-set">
+        {resultSets.length > 1 && (
+          <div className="qr-result-set-header">
+            Result Set {index + 1} ({resultSet.rowCount} row{resultSet.rowCount !== 1 ? 's' : ''})
+          </div>
+        )}
+        <div className="qr-table-wrap">
+          <table className="qr-table">
           <thead>
             <tr>
               <th className="qr-row-num">#</th>
@@ -116,6 +116,7 @@ export default function QueryResults({
             ))}
           </tbody>
         </table>
+        </div>
       </div>
     );
   };
@@ -163,27 +164,9 @@ export default function QueryResults({
           )}
 
           {!loading && !error && result && resultSets.length > 0 && totalRows > 0 && (
-            <>
-              {resultSets.length > 1 && (
-                <div className="qr-tabs">
-                  {resultSets.map((rs, idx) => (
-                    <button
-                      key={idx}
-                      className={`qr-tab ${activeTab === idx ? 'qr-tab--active' : ''}`}
-                      onClick={() => setActiveTab(idx)}
-                    >
-                      Result Set {idx + 1}
-                      <span className="qr-tab-count">{rs.rowCount} rows</span>
-                    </button>
-                  ))}
-                </div>
-              )}
-              <div className="qr-content">
-                {resultSets.length === 1
-                  ? renderResultSet(resultSets[0], 0)
-                  : renderResultSet(resultSets[activeTab], activeTab)}
-              </div>
-            </>
+            <div className="qr-content qr-content--stacked">
+              {resultSets.map((rs, idx) => renderResultSet(rs, idx))}
+            </div>
           )}
         </div>
       )}

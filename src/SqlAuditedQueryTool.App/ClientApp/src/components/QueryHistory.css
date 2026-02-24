@@ -24,38 +24,6 @@
   background: var(--accent);
 }
 
-.qh-resize-handle-vertical {
-  position: absolute;
-  bottom: 0;
-  left: 0;
-  right: 0;
-  height: 6px;
-  cursor: ns-resize;
-  z-index: 10;
-  background: transparent;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-top: 1px solid var(--border);
-}
-
-.qh-resize-handle-vertical:hover {
-  background: var(--bg-tertiary);
-}
-
-.qh-resize-handle-vertical:hover .qh-resize-handle-bar,
-.qh-resize-handle-vertical:active .qh-resize-handle-bar {
-  background: var(--accent);
-}
-
-.qh-resize-handle-bar {
-  width: 40px;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--border);
-  transition: background 0.15s;
-}
-
 .qh-title {
   padding: 8px 12px;
   font-size: 13px;

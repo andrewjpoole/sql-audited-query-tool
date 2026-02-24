@@ -112,6 +112,7 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
     setMonacoRef(monaco);
 
     // Register schema completion provider
+    // Backend returns ALL context-appropriate items; Monaco filters client-side
     const completionDisposable = monaco.languages.registerCompletionItemProvider('sql', {
       triggerCharacters: ['.', ' '],
       provideCompletionItems: async (
@@ -119,6 +120,15 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
         position: Monaco.Position
       ) => {
         try {
+          // Get the word being typed (for proper range replacement)
+          const wordInfo = model.getWordUntilPosition(position);
+          const range = {
+            startLineNumber: position.lineNumber,
+            startColumn: wordInfo.startColumn,
+            endLineNumber: position.lineNumber,
+            endColumn: wordInfo.endColumn,
+          };
+
           // Get text before cursor for context
           const textUntilPosition = model.getValueInRange({
             startLineNumber: 1,
@@ -149,18 +159,14 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
           const completions = await response.json();
 
           // Transform backend response to Monaco completion items
+          // Backend returns ALL context-appropriate items; Monaco handles filtering
           const suggestions = completions.map((item: any) => ({
             label: item.label,
             kind: item.kind || monaco.languages.CompletionItemKind.Field,
-            insertText: item.insertText || item.label,
+            insertText: item.label,
             detail: item.detail,
             documentation: item.documentation,
-            range: {
-              startLineNumber: position.lineNumber,
-              startColumn: position.column,
-              endLineNumber: position.lineNumber,
-              endColumn: position.column,
-            },
+            range,
           }));
 
           return { suggestions };

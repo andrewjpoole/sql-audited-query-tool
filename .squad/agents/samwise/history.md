@@ -213,3 +213,55 @@ var response = await _client.GetResponseAsync(messages, chatOptions, cancellatio
 - `src\SqlAuditedQueryTool.App\Program.cs` — App depends on Aspire-registered services
 **Pattern:** For Aspire-based solutions, always start via `dotnet run --project <AppHost>`, never via individual project execution.
 
+### 2026-02-24: Simplified Autocomplete — Replaced Ollama Embeddings with Direct Schema Filtering
+**Problem:** Autocomplete implementation using Ollama embeddings was overly complex (~270 lines) with semantic search, vector stores, background embedding services, and heavyweight infrastructure for basic SQL completion.
+**Solution:** Created `SimpleCompletionService` (85 lines) that:
+1. Takes `ISchemaProvider` as dependency (already provides schema metadata)
+2. Detects SQL context via regex (AfterFrom → tables, AfterSelect → columns, AfterWhere → columns, etc.)
+3. Filters schema items by context (no semantic search needed)
+4. Returns ALL matching items — Monaco handles client-side prefix filtering
+**What was removed:**
+- `EmbeddingCompletionService` (270 lines) — complex semantic search with embedding scoring
+- `OllamaEmbeddingService` — HTTP client to Ollama for embeddings
+- `InMemoryVectorStore` — vector storage and cosine similarity search
+- `SchemaEmbeddingService` — background service pre-embedding schema on startup
+- `ollamaEmbed` Ollama model (nomic-embed-text) — no longer needed
+- All embedding-related DI registrations
+**New implementation:**
+- `SimpleCompletionService` — 85 lines total
+- Context detection: FROM/JOIN → tables only (no keywords), SELECT → columns + keywords, WHERE/AND/OR → columns only
+- All filtering done synchronously in-memory (no async vector lookups)
+- Returns full schema items for Monaco's built-in prefix matching
+**Tests:** Created `SimpleCompletionServiceTests` with 22 comprehensive tests:
+- Context detection (FROM, JOIN, SELECT, WHERE, AND, OR)
+- Table filtering (all tables returned in FROM/JOIN contexts)
+- Column filtering (all columns returned in SELECT/WHERE contexts)
+- Keyword exclusion (FROM/JOIN/WHERE contexts exclude keywords)
+- Case insensitivity (detects SQL keywords regardless of case)
+- Edge cases (empty prefix, whitespace, general context)
+**Files changed:**
+- Created: `src\SqlAuditedQueryTool.Llm\Services\SimpleCompletionService.cs`
+- Created: `tests\SqlAuditedQueryTool.Llm.Tests\SimpleCompletionServiceTests.cs`
+- Deleted: `src\SqlAuditedQueryTool.Llm\Services\EmbeddingCompletionService.cs`
+- Deleted: `tests\SqlAuditedQueryTool.Llm.Tests\EmbeddingCompletionContextTests.cs`
+- Deleted: `tests\SqlAuditedQueryTool.Llm.Tests\Services.cs`
+- Updated: `src\SqlAuditedQueryTool.Llm\LlmServiceCollectionExtensions.cs` — simplified DI registration
+- Updated: `src\SqlAuditedQueryTool.App\Program.cs` — removed ollamaEmbed client registration
+- Updated: `SqlAuditedQueryTool.AppHost\AppHost.cs` — removed nomic-embed-text model
+**Key benefits:**
+1. **Simplicity:** 85 lines vs 270+ lines of complexity
+2. **No external dependencies:** No Ollama embeddings needed
+3. **Fast:** Direct filtering, no async vector lookups
+4. **Maintainable:** Context detection logic is clear and testable
+5. **Reliable:** No embeddings to pre-compute or cache
+**Pattern:** For autocomplete scenarios where context is clear (SQL keywords), direct filtering is superior to semantic search. Use embeddings only when semantic understanding is truly needed.
+**Test results:** All 22 tests passed — context detection, filtering, case insensitivity all verified.
+
+### 2026-02-24: Obsolete Vector Store Endpoint Cleanup
+**Problem:** After removing embeddings/vectorStore infrastructure in favor of SimpleCompletionService, the `/api/debug/vectorstore` endpoint in Program.cs still referenced `IVectorStore` as a parameter, causing build error: "Body was inferred but the method does not allow inferred body parameters."
+**Root cause:** The debug endpoint was leftover from the embeddings implementation and served no purpose after the migration to SimpleCompletionService.
+**Fix:** Removed the entire `/api/debug/vectorstore` endpoint (lines 401-425) from Program.cs. This endpoint was for diagnostics only and had no frontend consumers.
+**Impact:** App now builds and runs successfully. No breaking changes to any functional endpoints.
+**Key lesson:** When removing major features (like embeddings infrastructure), search for all dependent code including debug/diagnostic endpoints. Use grep to find references before removing interfaces/services.
+**Files modified:** `src\SqlAuditedQueryTool.App\Program.cs` — removed obsolete vectorstore endpoint.
+

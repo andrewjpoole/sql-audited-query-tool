@@ -17,12 +17,10 @@ var ollama = builder.AddOllama("ollama")
     .WithOpenWebUI();
 
 var ollamaModel = ollama.AddModel("ollamaModel", "qwen2.5-coder:7b");
-var ollamaEmbed = ollama.AddModel("ollamaEmbed", "nomic-embed-text");
 
 var api = builder.AddProject<SqlAuditedQueryTool_App>("api")
     .WithReference(db).WaitFor(db)
-    .WithReference(ollamaModel).WaitFor(ollamaModel)
-    .WithReference(ollamaEmbed).WaitFor(ollamaEmbed);
+    .WithReference(ollamaModel).WaitFor(ollamaModel);
 
 builder.AddViteApp("frontend", "../src/SqlAuditedQueryTool.App/ClientApp")
     .WithHttpEndpoint(port: 5173, name: "vite")

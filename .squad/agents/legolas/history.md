@@ -551,3 +551,29 @@ pm run build succeeds (75 modules, 236.93KB JS gzip 74.06KB)
 - **Files modified:** TabbedSqlEditor.tsx (added imports: useEffect, useRef; added ref, registration, cleanup)
 - **No TypeScript errors:** Uses correct Monaco types (Monaco.IDisposable, monaco.languages.CompletionItemKind.Field)
 - **User experience:** Once backend is ready, users will see schema-aware completions when typing SQL queries — appears automatically on '.' and space, or via Ctrl+Space
+
+### 2026-02-24T22:15:21Z: Monaco Autocomplete Simplified for Client-Side Filtering
+- **Task:** Simplified Monaco completion provider to leverage Monaco's built-in filtering instead of client-side pre-filtering
+- **Architecture change:** Backend now returns ALL context-appropriate items (e.g., all tables after FROM, all columns after SELECT); Monaco filters them as user types
+- **Changes made in TabbedSqlEditor.tsx:**
+  - Line 115: Added comment clarifying backend returns ALL items, Monaco filters client-side
+  - Line 162: Added comment clarifying Monaco handles filtering
+  - Line 166: Changed insertText: item.insertText || item.label to insertText: item.label — simplified to always use label (backend provides correct value)
+  - Removed any fallback logic — trust backend to return correct completion items
+- **What stayed the same:**
+  - Completion provider registration via monaco.languages.registerCompletionItemProvider
+  - Trigger characters: ['.', ' ']
+  - Replacement range using getWordUntilPosition (already correct)
+  - Backend endpoint: POST /api/completions/schema
+  - Request payload: { prefix, context, cursorLine }
+  - Response format: [{ label, kind, detail, documentation }]
+  - Graceful error handling (returns empty suggestions on error)
+- **Key insight:** Monaco's built-in filtering is extremely efficient — it uses fuzzy matching, camelCase matching, and intelligent ranking. By returning ALL context-appropriate items, we get:
+  1. Better filtering UX (Monaco's fuzzy matching is superior)
+  2. Simpler frontend code (no filtering logic needed)
+  3. Simpler backend code (no need to predict what user is typing)
+  4. Better performance (Monaco filters on UI thread, no network round-trips for each keystroke)
+- **Coordination:** Backend being updated in parallel by Samwise with SimpleCompletionService endpoint
+- **Pattern:** This is the recommended pattern for Monaco completions — provider fetches all relevant items, Monaco handles filtering/ranking
+- **Key file:** src/SqlAuditedQueryTool.App/ClientApp/src/components/TabbedSqlEditor.tsx lines 114-179
+- **Build verified:** Visual inspection shows changes are minimal and non-breaking

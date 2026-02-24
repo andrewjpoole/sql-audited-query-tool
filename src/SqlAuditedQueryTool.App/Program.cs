@@ -27,7 +27,6 @@ builder.Services.ConfigureAll<Microsoft.Extensions.Http.Resilience.HttpStandardR
 });
 
 builder.AddOllamaApiClient("ollamaModel");
-builder.AddOllamaApiClient("ollamaEmbed");
 
 // Configure timeout for Ollama HTTP client
 builder.Services.Configure<OllamaOptions>(builder.Configuration.GetSection(OllamaOptions.SectionName));
@@ -44,19 +43,9 @@ builder.Services.AddSingleton<IConfigureOptions<HttpClientFactoryOptions>>(sp =>
 });
 
 // Bridge OllamaSharp's IOllamaApiClient to Microsoft.Extensions.AI's IChatClient
-// CRITICAL: Can't use GetRequiredService<IOllamaApiClient>() when multiple models registered - it returns last one
-// Solution: Get the IEnumerable of all registered IOllamaApiClient and find the one with the correct model
 builder.Services.AddScoped<IChatClient>(sp =>
 {
-    // The Aspire AddOllamaApiClient registers IOllamaApiClient instances in order
-    // We need the FIRST one (ollamaModel/qwen2.5-coder:7b), not the second (ollamaEmbed/nomic-embed-text)
-    var allOllamaClients = sp.GetServices<IOllamaApiClient>().ToList();
-    if (allOllamaClients.Count < 2)
-    {
-        throw new InvalidOperationException("Expected at least 2 Ollama clients registered (ollamaModel and ollamaEmbed)");
-    }
-    // First registered is ollamaModel (chat), second is ollamaEmbed (embeddings)
-    var chatClient = allOllamaClients[0];
+    var chatClient = sp.GetRequiredService<IOllamaApiClient>();
     return (IChatClient)chatClient;
 });
 
@@ -405,33 +394,6 @@ app.MapPost("/api/completions/schema", async (
     {
         logger.LogError(ex, "POST /api/completions/schema failed");
         return Results.Json(new { message = ex.Message }, statusCode: 500);
-    }
-});
-
-// DEBUG: Vector store diagnostics
-app.MapGet("/api/debug/vectorstore", (IVectorStore vectorStore) =>
-{
-    try
-    {
-        var store = (SqlAuditedQueryTool.Llm.Services.InMemoryVectorStore)vectorStore;
-        var storeField = store.GetType().GetField("_store", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-        var dict = storeField?.GetValue(store) as System.Collections.Concurrent.ConcurrentDictionary<string, (float[], SqlAuditedQueryTool.Core.Models.Llm.VectorMetadata)>;
-        
-        if (dict == null)
-            return Results.Json(new { error = "Could not access vector store" });
-
-        var summary = new
-        {
-            totalItems = dict.Count,
-            categories = dict.GroupBy(kvp => kvp.Value.Item2.Category).Select(g => new { category = g.Key, count = g.Count() }).ToList(),
-            sampleKeys = dict.Keys.Take(20).ToList()
-        };
-
-        return Results.Ok(summary);
-    }
-    catch (Exception ex)
-    {
-        return Results.Json(new { error = ex.Message, stackTrace = ex.StackTrace }, statusCode: 500);
     }
 });
 

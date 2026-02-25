@@ -239,64 +239,75 @@ export default function SchemaTreeView({ onInsertText }: SchemaTreeViewProps) {
   return (
     <div className={`stv${collapsed ? ' stv--collapsed' : ''}`} style={{ width: collapsed ? undefined : `${width}px` }}>
       <div className="stv-resize-handle" onMouseDown={handleMouseDown} />
-      <div className="stv-header">
-        <span className="stv-header-title">Schema</span>
-        <button className="stv-btn-refresh" onClick={loadSchema} title="Refresh schema">🔄</button>
-        <button className="stv-btn-collapse" onClick={() => setCollapsed((v) => !v)} title={collapsed ? 'Expand' : 'Collapse'}>
-          {collapsed ? '▶' : '◀'}
-        </button>
-      </div>
+      {collapsed ? (
+        <>
+          <button className="stv-btn-collapse stv-btn-collapse--collapsed" onClick={() => setCollapsed(false)} title="Expand">
+            ▶
+          </button>
+          <div className="stv-header-collapsed">Schema</div>
+        </>
+      ) : (
+        <>
+          <div className="stv-header">
+            <span className="stv-header-title">Schema</span>
+            <button className="stv-btn-refresh" onClick={loadSchema} title="Refresh schema">🔄</button>
+            <button className="stv-btn-collapse" onClick={() => setCollapsed(true)} title="Collapse">
+              ◀
+            </button>
+          </div>
 
-      <div className="stv-filter">
-        <input
-          type="text"
-          placeholder="🔍 Filter tables…"
-          value={filter}
-          onChange={(e) => setFilter(e.target.value)}
-        />
-      </div>
+          <div className="stv-filter">
+            <input
+              type="text"
+              placeholder="🔍 Filter tables…"
+              value={filter}
+              onChange={(e) => setFilter(e.target.value)}
+            />
+          </div>
 
-      {loading && <div className="stv-loading">Loading schema…</div>}
+          {loading && <div className="stv-loading">Loading schema…</div>}
 
-      {error && (
-        <div className="stv-error">
-          <span>{error}</span>
-          <button onClick={loadSchema}>Retry</button>
-        </div>
-      )}
-
-      {!loading && !error && (
-        <div className="stv-tree">
-          {schemaNames.length === 0 && (
-            <div className="stv-empty" style={{ '--depth': 0 } as React.CSSProperties}>
-              {filter ? 'No matching tables' : 'No tables found'}
+          {error && (
+            <div className="stv-error">
+              <span>{error}</span>
+              <button onClick={loadSchema}>Retry</button>
             </div>
           )}
-          {schemaNames.map((schemaName) => {
-            const sKey = `schema:${schemaName}`;
-            const isOpen = openSet[sKey] ?? true;
-            return (
-              <div key={schemaName} className="stv-node">
-                <div className="stv-row" style={{ '--depth': 0 } as React.CSSProperties} onClick={() => handleToggle(sKey)}>
-                  <ChevronIcon open={isOpen} />
-                  <span className="stv-icon">📁</span>
-                  <span className="stv-label">{schemaName}</span>
-                  <span className="stv-type">({grouped[schemaName].length})</span>
+
+          {!loading && !error && (
+            <div className="stv-tree">
+              {schemaNames.length === 0 && (
+                <div className="stv-empty" style={{ '--depth': 0 } as React.CSSProperties}>
+                  {filter ? 'No matching tables' : 'No tables found'}
                 </div>
-                {isOpen && grouped[schemaName].map((table) => (
-                  <TableNode
-                    key={`${table.schemaName}.${table.tableName}`}
-                    table={table}
-                    openSet={openSet}
-                    onToggle={handleToggle}
-                    onInsert={onInsertText}
-                    onContextMenu={handleContextMenu}
-                  />
-                ))}
-              </div>
-            );
-          })}
-        </div>
+              )}
+              {schemaNames.map((schemaName) => {
+                const sKey = `schema:${schemaName}`;
+                const isOpen = openSet[sKey] ?? true;
+                return (
+                  <div key={schemaName} className="stv-node">
+                    <div className="stv-row" style={{ '--depth': 0 } as React.CSSProperties} onClick={() => handleToggle(sKey)}>
+                      <ChevronIcon open={isOpen} />
+                      <span className="stv-icon">📁</span>
+                      <span className="stv-label">{schemaName}</span>
+                      <span className="stv-type">({grouped[schemaName].length})</span>
+                    </div>
+                    {isOpen && grouped[schemaName].map((table) => (
+                      <TableNode
+                        key={`${table.schemaName}.${table.tableName}`}
+                        table={table}
+                        openSet={openSet}
+                        onToggle={handleToggle}
+                        onInsert={onInsertText}
+                        onContextMenu={handleContextMenu}
+                      />
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </>
       )}
 
       {contextMenu.visible && contextMenu.table && (

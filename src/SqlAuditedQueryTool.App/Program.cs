@@ -289,7 +289,17 @@ app.MapPost("/api/chat", async (
                         sql,
                         rowCount = structuredResult.RowCount,
                         executionTimeMs = structuredResult.ExecutionMilliseconds,
-                        auditUrl = audit.GitHubIssueUrl
+                        auditUrl = audit.GitHubIssueUrl,
+                        result = new
+                        {
+                            resultSets = structuredResult.ResultSets.Select(rs => new
+                            {
+                                columns = rs.ColumnNames.Select(n => new { name = n, type = "unknown" }),
+                                rows = rs.Rows,
+                                rowCount = rs.RowCount
+                            }).ToList(),
+                            executionTimeMs = structuredResult.ExecutionMilliseconds
+                        }
                     });
                     
                     // Format result for LLM (use the LLM service's tool call handler for consistent formatting)
@@ -333,11 +343,16 @@ app.MapPost("/api/chat", async (
         await chatHistoryStore.AddMessageAsync(session.Id, assistantHistoryMsg);
 
         var firstSuggestion = response.SuggestedQueries.FirstOrDefault();
+        var firstExecutedQuery = executedQueries.FirstOrDefault();
+        
         return Results.Ok(new
         {
             sessionId = session.Id,
             message = response.Text,
             executedQueries,
+            // Frontend compatibility - single query/result
+            executedQuery = firstExecutedQuery != null ? ((dynamic)firstExecutedQuery).sql : null,
+            executedResult = firstExecutedQuery != null ? ((dynamic)firstExecutedQuery).result : null,
             suggestion = firstSuggestion is not null
                 ? new { sql = firstSuggestion.Sql, explanation = "", isFixQuery = firstSuggestion.IsFixQuery }
                 : (object?)null

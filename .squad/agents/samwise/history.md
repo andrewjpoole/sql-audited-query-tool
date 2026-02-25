@@ -265,3 +265,20 @@ var response = await _client.GetResponseAsync(messages, chatOptions, cancellatio
 **Key lesson:** When removing major features (like embeddings infrastructure), search for all dependent code including debug/diagnostic endpoints. Use grep to find references before removing interfaces/services.
 **Files modified:** `src\SqlAuditedQueryTool.App\Program.cs` — removed obsolete vectorstore endpoint.
 
+
+### 2026-02-24: Chat API Response Format Mismatch Fix
+**Problem:** Frontend calling /api/chat received response but was expecting different structure. Frontend expects xecutedQuery (string) and xecutedResult (QueryResult object) for AI-executed queries, but backend was only returning xecutedQueries (array) without the result data.
+**Root cause:** The backend's /api/chat endpoint was adding executed queries to the response but:
+1. Only included metadata (historyId, sql, rowCount, executionTimeMs, auditUrl) without actual row data
+2. Didn't include backward-compatible xecutedQuery and xecutedResult fields that the frontend expects
+**Fix applied:**
+1. Enhanced the xecutedQueries array items to include a esult object with full query results:
+   - esultSets array with columns, rows, and rowCount
+   - xecutionTimeMs for each query
+2. Added frontend compatibility fields to the final response:
+   - xecutedQuery = first executed query SQL (string or null)
+   - xecutedResult = first executed query result (full QueryResult structure or null)
+**Files modified:**
+- src\SqlAuditedQueryTool.App\Program.cs — line 286-303 (added result data to executedQueries), line 335-347 (added backward-compatible fields)
+**Pattern:** When frontend expects specific response shape (executedQuery/executedResult), ensure backend provides both the modern structure (executedQueries array) and backward-compatible fields. This allows frontend to work correctly whether one or multiple queries were executed.
+**Key learning:** API response format mismatches don't always cause 404s or crashes - they can cause silent failures where the endpoint succeeds but the frontend can't properly handle the response structure. Always verify frontend expectations match backend response shape.

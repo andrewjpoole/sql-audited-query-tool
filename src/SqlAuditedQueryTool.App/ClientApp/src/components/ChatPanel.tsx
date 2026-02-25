@@ -58,7 +58,11 @@ export default function ChatPanel({
   const [chatsExpanded, setChatsExpanded] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [inputHistory, setInputHistory] = useState<string[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [collapsed, setCollapsed] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
+  const textAreaRef = useRef<HTMLTextAreaElement>(null);
 
   const { width, handleMouseDown: handlePanelResize } = useHorizontalResize({
     initialWidth: 360,
@@ -69,7 +73,7 @@ export default function ChatPanel({
   });
 
   const { height: textAreaHeight, handleMouseDown: handleTextAreaResize } = useVerticalResize({
-    initialHeight: 60,
+    initialHeight: 80,
     minHeight: 40,
     maxHeight: 300,
     storageKey: 'chatTextAreaHeight',
@@ -95,6 +99,10 @@ export default function ChatPanel({
       content: text,
       timestamp: new Date().toISOString(),
     };
+
+    // Add to input history
+    setInputHistory((prev) => [...prev, text]);
+    setHistoryIndex(-1);
 
     // Ensure we have a session - onNewSession returns the new session ID
     const sessionId = currentSessionId || onNewSession();
@@ -135,15 +143,75 @@ export default function ChatPanel({
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    } else if (e.key === 'ArrowUp' && !e.shiftKey) {
+      e.preventDefault();
+      if (inputHistory.length === 0) return;
+      
+      const newIndex = historyIndex === -1 
+        ? inputHistory.length - 1 
+        : Math.max(0, historyIndex - 1);
+      
+      setHistoryIndex(newIndex);
+      setInput(inputHistory[newIndex]);
+      
+      // Move cursor to end after setting value
+      setTimeout(() => {
+        if (textAreaRef.current) {
+          textAreaRef.current.selectionStart = textAreaRef.current.value.length;
+          textAreaRef.current.selectionEnd = textAreaRef.current.value.length;
+        }
+      }, 0);
+    } else if (e.key === 'ArrowDown' && !e.shiftKey) {
+      e.preventDefault();
+      if (historyIndex === -1) return;
+      
+      const newIndex = historyIndex + 1;
+      if (newIndex >= inputHistory.length) {
+        setHistoryIndex(-1);
+        setInput('');
+      } else {
+        setHistoryIndex(newIndex);
+        setInput(inputHistory[newIndex]);
+      }
+      
+      // Move cursor to end after setting value
+      setTimeout(() => {
+        if (textAreaRef.current) {
+          textAreaRef.current.selectionStart = textAreaRef.current.value.length;
+          textAreaRef.current.selectionEnd = textAreaRef.current.value.length;
+        }
+      }, 0);
     }
   };
 
+  // Auto-expand textarea based on content
+  useEffect(() => {
+    if (textAreaRef.current) {
+      // Reset height to measure scrollHeight accurately
+      textAreaRef.current.style.height = 'auto';
+      const newHeight = Math.min(Math.max(textAreaRef.current.scrollHeight, 80), 300);
+      textAreaRef.current.style.height = `${newHeight}px`;
+    }
+  }, [input]);
+
   return (
-    <div className="chat" style={{ width: `${width}px` }}>
+    <div className={`chat${collapsed ? ' chat--collapsed' : ''}`} style={{ width: collapsed ? undefined : `${width}px` }}>
       <div className="chat-resize-handle" onMouseDown={handlePanelResize} />
-      <div className="chat-header">
-        <span className="chat-header-title">💬 Chat Assistant</span>
-      </div>
+      {collapsed ? (
+        <>
+          <button className="chat-btn-collapse chat-btn-collapse--collapsed" onClick={() => setCollapsed(false)} title="Expand">
+            ◀
+          </button>
+          <div className="chat-header-collapsed">💬 Chat Assistant</div>
+        </>
+      ) : (
+        <>
+          <div className="chat-header">
+            <button className="chat-btn-collapse" onClick={() => setCollapsed(true)} title="Collapse">
+              ▶
+            </button>
+            <span className="chat-header-title">💬 Chat Assistant</span>
+          </div>
 
       {/* Chats section */}
       <div className="chat-sessions">
@@ -243,8 +311,9 @@ export default function ChatPanel({
 
       <div className="chat-input-area">
         <div className="chat-input-wrapper">
-          <div className="chat-input-resize-handle" onMouseDown={handleTextAreaResize} />
+          <div className="chat-input-resize-handle chat-input-resize-handle--visible" onMouseDown={handleTextAreaResize} />
           <textarea
+            ref={textAreaRef}
             className="chat-input"
             style={{ height: `${textAreaHeight}px` }}
             placeholder="Ask about your database…"
@@ -262,6 +331,8 @@ export default function ChatPanel({
           Send
         </button>
       </div>
+        </>
+      )}
     </div>
   );
 }

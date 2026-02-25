@@ -28,6 +28,7 @@
 .stv-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 6px;
   padding: 8px 12px;
   font-weight: 600;
@@ -36,6 +37,17 @@
 }
 
 .stv-header-title {
+  flex: 1;
+}
+
+.stv-header-collapsed {
+  writing-mode: vertical-rl;
+  text-orientation: mixed;
+  padding: 12px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  background: var(--bg-tertiary);
+  white-space: nowrap;
   flex: 1;
 }
 
@@ -48,6 +60,7 @@
   padding: 2px 4px;
   border-radius: 3px;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .stv-btn-refresh:hover {
@@ -64,11 +77,20 @@
   padding: 2px 4px;
   border-radius: 3px;
   line-height: 1;
+  flex-shrink: 0;
 }
 
 .stv-btn-collapse:hover {
   color: var(--text-primary);
   background: var(--bg-primary);
+}
+
+.stv-btn-collapse--collapsed {
+  background: none;
+  padding: 6px 8px;
+  font-size: 14px;
+  margin: 8px auto 0;
+  display: block;
 }
 
 .stv-filter {
@@ -246,16 +268,18 @@
 
 /* collapsed state */
 .stv--collapsed {
-  width: 40px;
-  min-width: 40px;
+  width: 32px !important;
+  min-width: 32px !important;
 }
 
-.stv--collapsed .stv-header-title,
 .stv--collapsed .stv-filter,
 .stv--collapsed .stv-tree,
-.stv--collapsed .stv-btn-refresh,
 .stv--collapsed .stv-loading,
 .stv--collapsed .stv-error {
+  display: none;
+}
+
+.stv--collapsed .stv-resize-handle {
   display: none;
 }
 

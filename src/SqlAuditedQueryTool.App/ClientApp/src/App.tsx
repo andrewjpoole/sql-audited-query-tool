@@ -46,7 +46,7 @@ export default function App() {
 
   // Vertical resize between editor and results
   const { height: editorHeight, handleMouseDown: handleEditorResize } = useVerticalResize({
-    initialHeight: 400,
+    initialHeight: 500,
     minHeight: 200,
     maxHeight: 800,
     storageKey: 'editorPanelHeight',

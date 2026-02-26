@@ -14,6 +14,7 @@ export interface QueryResultSet {
 export interface QueryResult {
   resultSets: QueryResultSet[];
   executionTimeMs: number;
+  executionPlanXml?: string | null;
   // Legacy support for single result set
   columns?: QueryResultColumn[];
   rows?: Record<string, unknown>[];
@@ -97,11 +98,11 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function executeQuery(sql: string): Promise<QueryResult> {
+export async function executeQuery(sql: string, executionPlanMode: 'None' | 'Estimated' | 'Actual' = 'None'): Promise<QueryResult> {
   const response = await fetch('/api/query/execute', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sql }),
+    body: JSON.stringify({ sql, executionPlanMode }),
   });
   return handleResponse<QueryResult>(response);
 }

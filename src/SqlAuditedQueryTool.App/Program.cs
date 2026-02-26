@@ -66,6 +66,7 @@ builder.Services.AddCors(options =>
 builder.Services.ConfigureHttpJsonOptions(options =>
 {
     options.SerializerOptions.PropertyNameCaseInsensitive = true;
+    options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter());
 });
 
 // Configure request timeout for long-running LLM chat operations
@@ -425,13 +426,14 @@ app.MapPost("/api/query/execute", async (
         var queryRequest = new QueryRequest
         {
             Sql = request.Sql,
-            RequestedBy = request.Source == "AI" ? "Ollama" : "anonymous" // TODO: replace with authenticated user
+            RequestedBy = request.Source == "AI" ? "Ollama" : "anonymous", // TODO: replace with authenticated user
+            ExecutionPlanMode = request.ExecutionPlanMode ?? ExecutionPlanMode.None
         };
         var result = await executor.ExecuteReadOnlyQueryAsync(queryRequest);
         var audit = await auditLogger.LogQueryAsync(queryRequest, result);
         
-        logger.LogInformation("API: Query executed - {ResultSetCount} result set(s), {TotalRows} total rows, {ExecutionMs}ms",
-            result.ResultSets.Count, result.RowCount, result.ExecutionMilliseconds);
+        logger.LogInformation("API: Query executed - {ResultSetCount} result set(s), {TotalRows} total rows, {ExecutionMs}ms, HasPlan={HasPlan}",
+            result.ResultSets.Count, result.RowCount, result.ExecutionMilliseconds, result.HasExecutionPlan);
         
         // Save to query history
         var historyEntry = new QueryHistory
@@ -447,7 +449,8 @@ app.MapPost("/api/query/execute", async (
             ExecutionMilliseconds = result.ExecutionMilliseconds,
             Succeeded = result.Succeeded,
             ErrorMessage = result.ErrorMessage,
-            GitHubIssueUrl = audit.GitHubIssueUrl
+            GitHubIssueUrl = audit.GitHubIssueUrl,
+            IncludedExecutionPlan = request.ExecutionPlanMode != null && request.ExecutionPlanMode != ExecutionPlanMode.None
         };
         await historyStore.AddAsync(historyEntry);
         
@@ -462,6 +465,7 @@ app.MapPost("/api/query/execute", async (
             }).ToList(),
             executionTimeMs = result.ExecutionMilliseconds,
             auditUrl = audit.GitHubIssueUrl,
+            executionPlanXml = result.ExecutionPlanXml,
             // Legacy compatibility
             columns = result.ColumnNames.Select(n => new { name = n, type = "unknown" }),
             rows = result.Rows,
@@ -491,7 +495,8 @@ app.MapGet("/api/query/history", async (IQueryHistoryStore historyStore, int? li
         executionTimeMs = h.ExecutionMilliseconds,
         succeeded = h.Succeeded,
         errorMessage = h.ErrorMessage,
-        auditUrl = h.GitHubIssueUrl
+        auditUrl = h.GitHubIssueUrl,
+        includedExecutionPlan = h.IncludedExecutionPlan
     }));
 });
 
@@ -567,4 +572,4 @@ app.Run();
 record ChatRequest(Guid? SessionId, string? SystemPrompt, List<ChatMessageDto> Messages, bool? Stream, bool? IncludeSchema);
 record ChatMessageDto(string Role, string Content);
 record QuerySuggestRequest(string NaturalLanguageRequest);
-record ExecuteQueryRequest(string Sql, string? Source);
+record ExecuteQueryRequest(string Sql, string? Source, ExecutionPlanMode? ExecutionPlanMode);

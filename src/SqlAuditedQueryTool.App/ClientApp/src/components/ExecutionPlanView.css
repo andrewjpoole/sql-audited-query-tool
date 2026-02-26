@@ -1,0 +1,111 @@
+.execution-plan-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 100%;
+}
+
+.plan-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--color-bg-secondary);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.plan-total-cost {
+  font-size: 13px;
+  color: var(--color-text-secondary);
+}
+
+.plan-total-cost strong {
+  color: var(--color-accent);
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.plan-statement {
+  font-size: 11px;
+  color: var(--color-text-secondary);
+  font-family: 'Courier New', Courier, monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 400px;
+}
+
+.plan-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 12px;
+  background: var(--color-bg-tertiary);
+  color: var(--color-text-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.plan-btn:hover {
+  background: var(--color-bg);
+  color: var(--color-text);
+  border-color: var(--color-accent);
+}
+
+.plan-content {
+  flex: 1;
+  overflow: auto;
+  background: var(--color-bg);
+}
+
+.plan-visual {
+  padding: 16px;
+  min-height: 100%;
+}
+
+.plan-xml {
+  margin: 0;
+  padding: 16px;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'Courier New', Courier, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}
+
+.plan-error {
+  padding: 16px;
+  color: var(--color-error, #ff6b6b);
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-error, #ff6b6b);
+  border-radius: 4px;
+  margin: 16px;
+}
+
+/* Override html-query-plan styles to match our theme */
+.qp-root {
+  background-color: var(--color-bg) !important;
+  color: var(--color-text) !important;
+}
+
+.qp-node {
+  background-color: var(--color-bg-secondary) !important;
+  border-color: var(--color-border) !important;
+  color: var(--color-text) !important;
+}
+
+.qp-node:hover {
+  background-color: var(--color-bg-tertiary) !important;
+}
+
+.qp-tt {
+  background-color: var(--color-bg-secondary) !important;
+  border-color: var(--color-border) !important;
+  color: var(--color-text) !important;
+}

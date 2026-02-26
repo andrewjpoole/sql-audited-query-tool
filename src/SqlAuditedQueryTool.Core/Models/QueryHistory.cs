@@ -17,6 +17,7 @@ public sealed class QueryHistory
     public required bool Succeeded { get; init; }
     public string? ErrorMessage { get; init; }
     public string? GitHubIssueUrl { get; init; }
+    public bool IncludedExecutionPlan { get; init; }
 }
 
 /// <summary>

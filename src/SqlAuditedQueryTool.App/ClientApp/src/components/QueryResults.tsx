@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import type { QueryResult, QueryResultSet } from '../api/queryApi';
+import ExecutionPlanView from './ExecutionPlanView';
 import './QueryResults.css';
 
 interface QueryResultsProps {
@@ -18,6 +19,8 @@ interface SortState {
   direction: SortDir;
 }
 
+type ActiveTabType = number | 'execution-plan';
+
 export default function QueryResults({
   result,
   loading,
@@ -30,17 +33,30 @@ export default function QueryResults({
     column: null,
     direction: 'asc',
   });
+  
+  const [activeTab, setActiveTab] = useState<ActiveTabType>(0);
 
   // Normalize result to always work with resultSets array
+  // Filter out empty result sets (0 rows and 0 columns)
   const resultSets: QueryResultSet[] = result
     ? result.resultSets?.length
-      ? result.resultSets
-      : result.columns && result.rows
+      ? result.resultSets.filter(rs => rs.rowCount > 0 || rs.columns.length > 0)
+      : result.columns && result.rows && result.columns.length > 0
       ? [{ columns: result.columns, rows: result.rows, rowCount: result.rowCount || 0 }]
       : []
     : [];
 
   const totalRows = resultSets.reduce((sum, rs) => sum + rs.rowCount, 0);
+  const hasExecutionPlan = result?.executionPlanXml != null;
+
+  // Auto-switch to execution plan tab if there are no result sets (Estimated mode)
+  useEffect(() => {
+    if (hasExecutionPlan && resultSets.length === 0) {
+      setActiveTab('execution-plan');
+    } else if (!hasExecutionPlan || resultSets.length > 0) {
+      setActiveTab(0);
+    }
+  }, [hasExecutionPlan, resultSets.length]);
 
   const handleSort = (resultSetIndex: number, colName: string) => {
     if (sortState.resultSetIndex === resultSetIndex && sortState.column === colName) {
@@ -157,15 +173,59 @@ export default function QueryResults({
             </div>
           )}
 
-          {!loading && !error && result && totalRows === 0 && (
+          {!loading && !error && result && totalRows === 0 && !hasExecutionPlan && (
             <div className="qr-status">
               <span>Query returned 0 rows ({result.executionTimeMs}ms)</span>
             </div>
           )}
 
-          {!loading && !error && result && resultSets.length > 0 && totalRows > 0 && (
-            <div className="qr-content qr-content--stacked">
-              {resultSets.map((rs, idx) => renderResultSet(rs, idx))}
+          {!loading && !error && result && (resultSets.length > 0 || hasExecutionPlan) && (
+            <div className="qr-content">
+              {/* Tab navigation - show tabs only if we have multiple result sets OR execution plan */}
+              {/* Only show result set tabs if there are actual result sets, and plan tab if there's a plan */}
+              {(resultSets.length > 1 || (resultSets.length > 0 && hasExecutionPlan)) && (
+                <div className="qr-tabs">
+                  {resultSets.map((_, idx) => (
+                    <button
+                      key={idx}
+                      className={`qr-tab ${activeTab === idx ? 'qr-tab--active' : ''}`}
+                      onClick={() => setActiveTab(idx)}
+                    >
+                      Result Set {idx + 1}
+                    </button>
+                  ))}
+                  {hasExecutionPlan && (
+                    <button
+                      className={`qr-tab ${activeTab === 'execution-plan' ? 'qr-tab--active' : ''}`}
+                      onClick={() => setActiveTab('execution-plan')}
+                    >
+                      📊 Execution Plan
+                    </button>
+                  )}
+                </div>
+              )}
+              
+              {/* Tab content */}
+              <div className="qr-tab-content">
+                {activeTab === 'execution-plan' ? (
+                  result.executionPlanXml && (
+                    <ExecutionPlanView planXml={result.executionPlanXml} />
+                  )
+                ) : (
+                  // Show result sets in stacked view if only one result set and no execution plan tabs
+                  (resultSets.length === 1 && !hasExecutionPlan) ? (
+                    <div className="qr-content-stacked">
+                      {resultSets.map((rs, idx) => renderResultSet(rs, idx))}
+                    </div>
+                  ) : resultSets.length > 0 ? (
+                    renderResultSet(resultSets[activeTab as number], activeTab as number)
+                  ) : (
+                    <div className="qr-status">
+                      <span>No result sets returned - see Execution Plan tab</span>
+                    </div>
+                  )
+                )}
+              </div>
             </div>
           )}
         </div>

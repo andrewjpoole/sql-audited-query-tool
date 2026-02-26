@@ -22,6 +22,9 @@ export default function App() {
   const [queryError, setQueryError] = useState<string | null>(null);
   const [resultsCollapsed, setResultsCollapsed] = useState(false);
   
+  // Execution plan state
+  const [executionPlanMode, setExecutionPlanMode] = useState<'None' | 'Estimated' | 'Actual'>('None');
+  
   // Current tab's result
   const queryResult = tabResults[activeTabId] || null;
   
@@ -70,12 +73,15 @@ export default function App() {
     setResultsCollapsed(false);
 
     try {
-      const result = await executeQuery(trimmed);
+      const result = await executeQuery(trimmed, executionPlanMode);
       console.log(`Frontend: Received ${result.resultSets?.length || 0} result set(s) from backend`);
       if (result.resultSets?.length) {
         result.resultSets.forEach((rs, idx) => {
           console.log(`  Result set ${idx + 1}: ${rs.rowCount} rows, ${rs.columns.length} columns`);
         });
+      }
+      if (result.executionPlanXml) {
+        console.log('Frontend: Received execution plan XML');
       }
       setTabResults((prev) => ({ ...prev, [currentTabId]: result }));
       const totalRows = result.resultSets?.length
@@ -101,7 +107,7 @@ export default function App() {
       setQueryLoading(false);
       executingRef.current = false;
     }
-  }, [sql]);
+  }, [sql, executionPlanMode]);
 
   const handleExecuteSelection = useCallback(async (selection: string) => {
     const trimmed = selection.trim();
@@ -116,12 +122,15 @@ export default function App() {
     setResultsCollapsed(false);
 
     try {
-      const result = await executeQuery(trimmed);
+      const result = await executeQuery(trimmed, executionPlanMode);
       console.log(`Frontend: Received ${result.resultSets?.length || 0} result set(s) from backend`);
       if (result.resultSets?.length) {
         result.resultSets.forEach((rs, idx) => {
           console.log(`  Result set ${idx + 1}: ${rs.rowCount} rows, ${rs.columns.length} columns`);
         });
+      }
+      if (result.executionPlanXml) {
+        console.log('Frontend: Received execution plan XML');
       }
       setTabResults((prev) => ({ ...prev, [currentTabId]: result }));
       const totalRows = result.resultSets?.length
@@ -147,7 +156,7 @@ export default function App() {
       setQueryLoading(false);
       executingRef.current = false;
     }
-  }, []);
+  }, [executionPlanMode]);
 
   const handleInsertSql = useCallback((newSql: string) => {
     editorRef.current?.insertTextAtCursor(newSql);
@@ -168,7 +177,7 @@ export default function App() {
         setQueryError(null);
         setResultsCollapsed(false);
         try {
-          const result = await executeQuery(newSql);
+          const result = await executeQuery(newSql, executionPlanMode);
           setTabResults((prev) => ({ ...prev, [currentTabId]: result }));
           const totalRows = result.resultSets?.length
             ? result.resultSets.reduce((sum, rs) => sum + rs.rowCount, 0)
@@ -193,7 +202,7 @@ export default function App() {
         }
       });
     },
-    [],
+    [executionPlanMode],
   );
 
   const handleHistorySelect = useCallback((selectedSql: string) => {
@@ -243,6 +252,11 @@ export default function App() {
   const handleActiveTabChange = useCallback((tabId: string) => {
     setActiveTabId(tabId);
   }, []);
+  
+  // Handle execution plan mode changes
+  const handleExecutionPlanModeChange = useCallback((mode: 'None' | 'Estimated' | 'Actual') => {
+    setExecutionPlanMode(mode);
+  }, []);
 
   return (
     <div className="app">
@@ -265,6 +279,7 @@ export default function App() {
               onExecute={handleExecute}
               onExecuteSelection={handleExecuteSelection}
               onActiveTabChange={handleActiveTabChange}
+              onShowPlanChange={handleExecutionPlanModeChange}
             />
           </div>
 

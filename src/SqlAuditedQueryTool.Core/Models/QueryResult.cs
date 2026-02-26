@@ -21,6 +21,8 @@ public sealed class QueryResult
     public bool Succeeded { get; init; } = true;
     public string? ErrorMessage { get; init; }
     public DateTimeOffset Timestamp { get; init; } = DateTimeOffset.UtcNow;
+    public string? ExecutionPlanXml { get; init; }
+    public bool HasExecutionPlan => ExecutionPlanXml is not null;
     
     // Legacy properties for backward compatibility
     public int RowCount => ResultSets.Sum(rs => rs.RowCount);

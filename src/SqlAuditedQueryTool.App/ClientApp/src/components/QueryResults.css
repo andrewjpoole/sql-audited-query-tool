@@ -161,6 +161,22 @@
   font-weight: 400;
 }
 
+.qr-tab-content {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.qr-content-stacked {
+  flex: 1;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 8px;
+}
+
 .qr-table {
   width: 100%;
   border-collapse: collapse;

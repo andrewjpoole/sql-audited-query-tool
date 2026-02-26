@@ -1,0 +1,133 @@
+.plan-node {
+  position: relative;
+}
+
+.plan-node-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 8px 12px;
+  margin: 4px 0;
+  background: var(--color-bg-secondary);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  transition: all 0.15s ease;
+}
+
+.plan-node-header:hover {
+  background: var(--color-bg-tertiary);
+  border-color: var(--color-accent);
+}
+
+.plan-node-toggle {
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: none;
+  cursor: pointer;
+  font-size: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color 0.15s ease;
+}
+
+.plan-node-toggle:hover {
+  color: var(--color-accent);
+}
+
+.plan-node-spacer {
+  width: 20px;
+  flex-shrink: 0;
+}
+
+.plan-node-content {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.plan-node-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.plan-node-type {
+  font-weight: 600;
+  color: var(--color-text);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.plan-node-object {
+  color: var(--color-accent);
+  font-size: 12px;
+  font-family: 'Courier New', Courier, monospace;
+}
+
+.plan-node-stats {
+  display: flex;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 11px;
+}
+
+.plan-stat {
+  color: var(--color-text-secondary);
+  white-space: nowrap;
+}
+
+.plan-stat-actual {
+  color: var(--color-accent);
+  font-weight: 500;
+}
+
+.plan-node-properties {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--color-border);
+}
+
+.plan-property {
+  display: flex;
+  gap: 8px;
+  font-size: 11px;
+}
+
+.plan-property-key {
+  color: var(--color-text-secondary);
+  font-weight: 500;
+  min-width: 80px;
+  flex-shrink: 0;
+}
+
+.plan-property-value {
+  color: var(--color-text);
+  font-family: 'Courier New', Courier, monospace;
+  word-break: break-word;
+}
+
+.plan-node-children {
+  position: relative;
+}
+
+/* Connection lines */
+.plan-node-children::before {
+  content: '';
+  position: absolute;
+  left: 10px;
+  top: 0;
+  bottom: 16px;
+  width: 1px;
+  background: var(--color-border);
+}

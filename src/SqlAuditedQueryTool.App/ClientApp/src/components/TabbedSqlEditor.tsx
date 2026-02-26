@@ -18,6 +18,7 @@ interface SqlEditorProps {
   onExecute: () => void;
   onExecuteSelection: (selection: string) => void;
   onActiveTabChange?: (tabId: string) => void;
+  onShowPlanChange?: (mode: 'None' | 'Estimated' | 'Actual') => void;
 }
 
 interface QueryTab {
@@ -42,7 +43,7 @@ function insertText(editor: Monaco.editor.ICodeEditor, text: string) {
   editor.focus();
 }
 
-const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function TabbedSqlEditor({ value, onChange, onExecute, onExecuteSelection, onActiveTabChange }, ref) {
+const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function TabbedSqlEditor({ value, onChange, onExecute, onExecuteSelection, onActiveTabChange, onShowPlanChange }, ref) {
   const [editorRef, setEditorRef] = useState<Monaco.editor.IStandaloneCodeEditor | null>(null);
   const [monacoRef, setMonacoRef] = useState<typeof Monaco | null>(null);
   const completionDisposableRef = useRef<Monaco.IDisposable | null>(null);
@@ -57,8 +58,20 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
     },
   ]);
   const [activeTabId, setActiveTabId] = useState('default');
+  
+  // Execution plan mode state - persisted to localStorage
+  const [planMode, setPlanMode] = useState<'None' | 'Estimated' | 'Actual'>(() => {
+    const saved = localStorage.getItem('executionPlanMode');
+    return (saved === 'Estimated' || saved === 'Actual') ? saved : 'None';
+  });
 
   const activeTab = tabs.find((t) => t.id === activeTabId) || tabs[0];
+  
+  // Persist plan mode to localStorage and notify parent
+  useEffect(() => {
+    localStorage.setItem('executionPlanMode', planMode);
+    onShowPlanChange?.(planMode);
+  }, [planMode, onShowPlanChange]);
 
   useImperativeHandle(ref, () => ({
     insertTextAtCursor(text: string) {
@@ -160,7 +173,7 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
 
           // Transform backend response to Monaco completion items
           // Backend returns ALL context-appropriate items; Monaco handles filtering
-          const suggestions = completions.map((item: any) => ({
+          const suggestions = completions.map((item: { label: string; kind?: number; detail?: string; documentation?: string }) => ({
             label: item.label,
             kind: item.kind || monaco.languages.CompletionItemKind.Field,
             insertText: item.label,
@@ -451,6 +464,18 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
         }} title="Run Selection (F8)">
           ▶ Run Selection
         </button>
+        <div className="plan-mode-selector" title="Execution plan mode">
+          <label htmlFor="plan-mode">Plan:</label>
+          <select
+            id="plan-mode"
+            value={planMode}
+            onChange={(e) => setPlanMode(e.target.value as 'None' | 'Estimated' | 'Actual')}
+          >
+            <option value="None">None</option>
+            <option value="Estimated">Estimated</option>
+            <option value="Actual">Actual</option>
+          </select>
+        </div>
       </div>
       <div className="editor-container">
         <Editor

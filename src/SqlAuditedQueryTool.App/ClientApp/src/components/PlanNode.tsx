@@ -8,7 +8,7 @@ interface PlanNodeProps {
 }
 
 export default function PlanNode({ node, level = 0 }: PlanNodeProps) {
-  const [isExpanded, setIsExpanded] = useState(level < 3); // Auto-expand first 3 levels
+  const [isExpanded, setIsExpanded] = useState(true); // Expand all by default
   const hasChildren = node.children.length > 0;
 
   const formatNumber = (num: number | undefined, decimals: number = 2): string => {
@@ -21,6 +21,23 @@ export default function PlanNode({ node, level = 0 }: PlanNodeProps) {
     if (cost < 0.1) return 'var(--color-success, #4ade80)';
     if (cost < 1) return 'var(--color-warning, #fbbf24)';
     return 'var(--color-error, #f87171)';
+  };
+
+  const getOperationIcon = (opType: string): string => {
+    const type = opType.toLowerCase();
+    if (type.includes('scan')) return '🔍';
+    if (type.includes('seek')) return '🎯';
+    if (type.includes('sort')) return '🔀';
+    if (type.includes('hash')) return '⚡';
+    if (type.includes('merge')) return '🔗';
+    if (type.includes('nested')) return '🔁';
+    if (type.includes('filter')) return '⚗️';
+    if (type.includes('aggregate')) return '∑';
+    if (type.includes('compute')) return '🧮';
+    if (type.includes('parallelism')) return '⚙️';
+    if (type.includes('spool')) return '💾';
+    if (type.includes('key lookup')) return '🔑';
+    return '📋';
   };
 
   return (
@@ -39,6 +56,7 @@ export default function PlanNode({ node, level = 0 }: PlanNodeProps) {
         
         <div className="plan-node-content">
           <div className="plan-node-main">
+            <span className="plan-node-icon">{getOperationIcon(node.operationType)}</span>
             <span className="plan-node-type">{node.operationType}</span>
             {node.object && (
               <span className="plan-node-object">

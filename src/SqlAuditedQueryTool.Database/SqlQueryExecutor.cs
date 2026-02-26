@@ -165,12 +165,28 @@ public sealed partial class SqlQueryExecutor : IQueryExecutor
         {
             stopwatch.Stop();
             _logger.LogError(ex, "Query execution failed after {ExecutionMs}ms", stopwatch.ElapsedMilliseconds);
+            
+            string errorMessage = ex.Message;
+            if (ex is Microsoft.Data.SqlClient.SqlException sqlEx)
+            {
+                // Build detailed error message with line number and error number
+                errorMessage = $"{sqlEx.Message}";
+                if (sqlEx.LineNumber > 0)
+                {
+                    errorMessage += $" (Line {sqlEx.LineNumber})";
+                }
+                if (sqlEx.Number > 0)
+                {
+                    errorMessage += $" [Error {sqlEx.Number}]";
+                }
+            }
+            
             return new QueryResult
             {
                 ResultSets = [],
                 ExecutionMilliseconds = stopwatch.ElapsedMilliseconds,
                 Succeeded = false,
-                ErrorMessage = ex.Message
+                ErrorMessage = errorMessage
             };
         }
     }

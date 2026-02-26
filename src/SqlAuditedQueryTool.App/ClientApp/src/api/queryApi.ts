@@ -12,6 +12,8 @@ export interface QueryResultSet {
 }
 
 export interface QueryResult {
+  succeeded?: boolean;
+  errorMessage?: string | null;
   resultSets: QueryResultSet[];
   executionTimeMs: number;
   executionPlanXml?: string | null;
@@ -104,7 +106,14 @@ export async function executeQuery(sql: string, executionPlanMode: 'None' | 'Est
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ sql, executionPlanMode }),
   });
-  return handleResponse<QueryResult>(response);
+  const result = await handleResponse<QueryResult>(response);
+  
+  // Check if the query failed on the backend
+  if (result.succeeded === false && result.errorMessage) {
+    throw new Error(result.errorMessage);
+  }
+  
+  return result;
 }
 
 export async function suggestQuery(message: string): Promise<QuerySuggestion> {

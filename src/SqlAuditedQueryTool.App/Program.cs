@@ -456,6 +456,8 @@ app.MapPost("/api/query/execute", async (
         
         return Results.Ok(new
         {
+            succeeded = result.Succeeded,
+            errorMessage = result.ErrorMessage,
             historyId = historyEntry.Id,
             resultSets = result.ResultSets.Select(rs => new
             {

@@ -88,10 +88,8 @@ function parseRelOp(relOpElement: Element, nodeCounter: { value: number }): Plan
 
   node.properties = props;
 
-  // Parse child RelOp elements
-  const childRelOps = Array.from(relOpElement.children).filter(
-    child => child.tagName === 'RelOp'
-  );
+  // Parse child RelOp elements - they can be nested anywhere in the tree
+  const childRelOps = Array.from(relOpElement.querySelectorAll(':scope > * > RelOp'));
   
   node.children = childRelOps.map(child => parseRelOp(child as Element, nodeCounter));
 

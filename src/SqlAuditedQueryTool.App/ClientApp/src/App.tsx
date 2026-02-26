@@ -97,12 +97,15 @@ export default function App() {
         },
       ]);
     } catch (err) {
-      setQueryError(err instanceof Error ? err.message : 'Query execution failed');
+      const errorMessage = err instanceof Error ? err.message : 'Query execution failed';
+      setQueryError(errorMessage);
       setTabResults((prev) => ({ ...prev, [currentTabId]: null }));
       setHistory((prev) => [
         ...prev,
         { sql: trimmed, timestamp: new Date().toISOString(), rowCount: null, source: 'user' },
       ]);
+      // Show error in editor
+      editorRef.current?.setError(errorMessage);
     } finally {
       setQueryLoading(false);
       executingRef.current = false;

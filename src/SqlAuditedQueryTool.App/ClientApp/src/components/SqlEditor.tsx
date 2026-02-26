@@ -5,6 +5,7 @@ import { v4 as uuidv4 } from 'uuid';
 
 export interface SqlEditorHandle {
   insertTextAtCursor: (text: string) => void;
+  setError: (errorMessage: string | null) => void;
 }
 
 interface SqlEditorProps {
@@ -28,6 +29,7 @@ function insertText(editor: Monaco.editor.ICodeEditor, text: string) {
 
 const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function SqlEditor({ value, onChange }, ref) {
   const editorRef = useRef<Monaco.editor.IStandaloneCodeEditor | null>(null);
+  const monacoRef = useRef<typeof Monaco | null>(null);
 
   useImperativeHandle(ref, () => ({
     insertTextAtCursor(text: string) {
@@ -40,10 +42,40 @@ const SqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function SqlEditor
       ]);
       editor.focus();
     },
+    setError(errorMessage: string | null) {
+      const editor = editorRef.current;
+      const monaco = monacoRef.current;
+      if (!editor || !monaco) return;
+      
+      const model = editor.getModel();
+      if (!model) return;
+
+      if (!errorMessage) {
+        monaco.editor.setModelMarkers(model, 'sql-errors', []);
+        return;
+      }
+
+      // Try to parse line/column from error message
+      // SQL Server format: "Error Number:156,State:1,Class:15" or "Incorrect syntax near..."
+      const lineMatch = errorMessage.match(/line (\d+)/i);
+      const line = lineMatch ? parseInt(lineMatch[1], 10) : 1;
+      
+      monaco.editor.setModelMarkers(model, 'sql-errors', [
+        {
+          startLineNumber: line,
+          startColumn: 1,
+          endLineNumber: line,
+          endColumn: model.getLineMaxColumn(line),
+          message: errorMessage,
+          severity: monaco.MarkerSeverity.Error,
+        },
+      ]);
+    },
   }));
 
   const handleMount: OnMount = useCallback((editor, monaco) => {
     editorRef.current = editor;
+    monacoRef.current = monaco;
 
     const CONTEXT_GROUP = '9_sql_helpers';
 

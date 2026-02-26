@@ -10,6 +10,7 @@ export interface SqlEditorHandle {
   executeQuery: () => void;
   executeSelection: () => void;
   getActiveTabId: () => string;
+  setError: (errorMessage: string | null) => void;
 }
 
 interface SqlEditorProps {
@@ -108,6 +109,31 @@ const TabbedSqlEditor = forwardRef<SqlEditorHandle, SqlEditorProps>(function Tab
     },
     getActiveTabId() {
       return activeTabId;
+    },
+    setError(errorMessage: string | null) {
+      if (!editorRef || !monacoRef) return;
+      const model = editorRef.getModel();
+      if (!model) return;
+
+      if (!errorMessage) {
+        monacoRef.editor.setModelMarkers(model, 'sql-errors', []);
+        return;
+      }
+
+      // Try to parse line number from error message
+      const lineMatch = errorMessage.match(/line (\d+)/i);
+      const line = lineMatch ? parseInt(lineMatch[1], 10) : 1;
+      
+      monacoRef.editor.setModelMarkers(model, 'sql-errors', [
+        {
+          startLineNumber: line,
+          startColumn: 1,
+          endLineNumber: line,
+          endColumn: model.getLineMaxColumn(line),
+          message: errorMessage,
+          severity: monacoRef.MarkerSeverity.Error,
+        },
+      ]);
     },
   }));
 

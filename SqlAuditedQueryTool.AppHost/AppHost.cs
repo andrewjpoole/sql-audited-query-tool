@@ -16,7 +16,7 @@ var ollama = builder.AddOllama("ollama")
     .WithLifetime(ContainerLifetime.Persistent)
     .WithOpenWebUI();
 
-var ollamaModel = ollama.AddModel("ollamaModel", "qwen2.5-coder:7b");
+var ollamaModel = ollama.AddModel("ollamaModel", "qwen2.5:7b");
 
 var api = builder.AddProject<SqlAuditedQueryTool_App>("api")
     .WithReference(db).WaitFor(db)

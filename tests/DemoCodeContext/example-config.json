@@ -1,0 +1,18 @@
+{
+  "CodeContext": {
+    "DefaultRepositoryPath": "D:\\git\\sql-audited-query-tool\\tests\\DemoCodeContext",
+    "AllowedDirectories": [
+      "D:\\git\\sql-audited-query-tool\\tests\\DemoCodeContext",
+      "D:\\git\\sql-audited-query-tool\\src"
+    ],
+    "ExcludePatterns": [
+      "**/bin/**",
+      "**/obj/**",
+      "**/.git/**",
+      "**/node_modules/**"
+    ],
+    "MaxFileSizeBytes": 1048576,
+    "MaxFilesPerList": 100,
+    "MaxSearchResults": 50
+  }
+}

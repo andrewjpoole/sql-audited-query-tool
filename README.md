@@ -8,7 +8,7 @@ A readonly SQL database query application designed for incident investigation, w
 - **GitHub Issue Audit Trail** — Every query execution is logged as a GitHub issue for compliance and traceability
 - **Local LLM Query Assistance** — AI-powered query suggestions via a local LLM using tool calling (Ollama requests query execution from our .NET app; Data is only exposed to the local LLM running in the container host)
 - **Chat Interface** — Conversational UI for building and executing queries
-- **EF Core Code Discovery** — Optional discovery of existing EF Core models and mappings to aid query construction
+- **Code Context System** — LLM can analyze Entity Framework code using file reading and Roslyn-based parsing to understand entities, relationships, and mappings
 
 ![screenshot](./docs/media/screenshot.png)
 
@@ -169,3 +169,61 @@ You should see your GPU with available memory. The `qwen2.5-coder:7b` model uses
 - All database connections are **read-only** — no INSERT, UPDATE, DELETE, or DDL operations permitted
 - The local LLM never receives actual database data — only schema metadata for query generation
 - All query executions are audited to GitHub issues with full context
+
+## Code Context System
+
+The LLM can analyze Entity Framework code to understand database structure and generate better queries.
+
+### Capabilities
+- **Discover entities**: Find all DbContext classes and their entity types
+- **Analyze properties**: Extract property types, data annotations, keys, and nullability
+- **Understand relationships**: Identify navigation properties and foreign keys
+- **Search code**: Find patterns using regex search
+- **Read files**: Access specific code files
+
+### Configuration
+Add to `appsettings.json`:
+```json
+{
+  "CodeContext": {
+    "DefaultRepositoryPath": "C:\\MyProject\\src",  // Optional: default code path
+    "AllowedDirectories": ["C:\\MyProject"],         // Whitelist for security
+    "MaxFileSizeBytes": 1048576                     // 1MB max per file
+  }
+}
+```
+
+### Usage
+The system provides 7 AI tools the LLM can invoke:
+- `ReadFile(path)` - Read a specific file
+- `ListFiles(directory, pattern)` - List files (e.g., "*DbContext.cs")
+- `SearchCode(pattern, directory)` - Regex search across files
+- `AnalyzeEntityFrameworkContext(directory)` - Deep Roslyn analysis of EF entities
+- `AddContextDirectory(directory)` - Add directory to allowed list (session-scoped)
+- `RemoveContextDirectory(directory)` - Remove directory from session list
+- `ListContextDirectories()` - View all allowed directories (config + session)
+
+**Dynamic Directory Access:**
+
+You can add directories on-the-fly during a chat session without restarting the app:
+
+```
+User: "Can you analyze the code in D:/git/my-new-project?"
+LLM: [calls AddContextDirectory] "Added directory. Analyzing..."
+```
+
+Session-added directories are temporary and reset on app restart. For permanent access, add them to `appsettings.json`.
+
+**Example LLM conversation:**
+```
+User: "What entities are in my codebase?"
+LLM: [calls AnalyzeEntityFrameworkContext] "Found 3 entities: User, Order, Product..."
+
+User: "What properties does User have?"
+LLM: "User has: Id (int, PK), Name (string, Required, Max 100), Email (string, nullable)..."
+
+User: "Add D:/git/admin-portal to the context"
+LLM: [calls AddContextDirectory] "Directory added. You can now query code from admin-portal."
+```
+
+**Tests:** See `tests/SqlAuditedQueryTool.Llm.Tests/Services/CodeContextAssistantTests.cs`

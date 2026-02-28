@@ -254,6 +254,7 @@ app.MapPost("/api/chat", async (
             {
                 logger.LogInformation("Executing tool: {ToolName}", toolCall.ToolName);
                 
+                // Special handling for execute_sql_query to capture structured data
                 if (toolCall.ToolName == "execute_sql_query" && toolCall.Arguments.TryGetValue("sql", out var sqlObj) && sqlObj is string sql)
                 {
                     // Execute query through unified pipeline (executor -> audit -> history)
@@ -302,30 +303,30 @@ app.MapPost("/api/chat", async (
                             executionTimeMs = structuredResult.ExecutionMilliseconds
                         }
                     });
-                    
-                    // Format result for LLM (use the LLM service's tool call handler for consistent formatting)
-                    var queryResult = await llmService.ExecuteToolCallAsync(toolCall, ct);
-
-                    // Save tool result to chat history
-                    var toolHistoryMsg = new ChatMessageHistory
-                    {
-                        Id = Guid.NewGuid(),
-                        SessionId = session.Id,
-                        Role = "tool",
-                        Content = queryResult,
-                        Timestamp = DateTimeOffset.UtcNow,
-                        ToolCallId = toolCall.ToolCallId,
-                        ToolName = toolCall.ToolName
-                    };
-                    session = await chatHistoryStore.AddMessageAsync(session.Id, toolHistoryMsg);
-
-                    // Add tool result to messages and continue conversation
-                    llmRequest.Messages.Add(new SqlAuditedQueryTool.Core.Models.Llm.ChatMessage
-                    {
-                        Role = "tool",
-                        Content = queryResult
-                    });
                 }
+                
+                // Execute tool through LLM service (handles all tools including code context)
+                var toolResult = await llmService.ExecuteToolCallAsync(toolCall, ct);
+
+                // Save tool result to chat history
+                var toolHistoryMsg = new ChatMessageHistory
+                {
+                    Id = Guid.NewGuid(),
+                    SessionId = session.Id,
+                    Role = "tool",
+                    Content = toolResult,
+                    Timestamp = DateTimeOffset.UtcNow,
+                    ToolCallId = toolCall.ToolCallId,
+                    ToolName = toolCall.ToolName
+                };
+                session = await chatHistoryStore.AddMessageAsync(session.Id, toolHistoryMsg);
+
+                // Add tool result to messages and continue conversation
+                llmRequest.Messages.Add(new SqlAuditedQueryTool.Core.Models.Llm.ChatMessage
+                {
+                    Role = "tool",
+                    Content = toolResult
+                });
             }
 
             // Get next response from LLM

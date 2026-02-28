@@ -3,12 +3,17 @@ using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
+using OllamaSharp;
+using OllamaSharp.Models;
+using OllamaSharp.Models.Chat;
 using SqlAuditedQueryTool.Core.Interfaces;
 using SqlAuditedQueryTool.Core.Interfaces.Llm;
 using SqlAuditedQueryTool.Core.Models;
 using SqlAuditedQueryTool.Core.Models.Llm;
 using SqlAuditedQueryTool.Llm.Configuration;
 using AIChatMessage = Microsoft.Extensions.AI.ChatMessage;
+using AIChatRole = Microsoft.Extensions.AI.ChatRole;
+using OllamaChatRole = OllamaSharp.Models.Chat.ChatRole;
 
 namespace SqlAuditedQueryTool.Llm.Services;
 
@@ -18,45 +23,66 @@ public sealed class OllamaLlmService : ILlmService
         "You are a SQL Server query assistant for incident investigation. " +
         "You help investigate incidents by executing queries and analyzing results. " +
         "Use the execute_sql_query tool to run SELECT queries when needed. " +
-        "After seeing results, provide analysis and suggest follow-up queries if helpful.";
+        "After seeing results, provide analysis and suggest follow-up queries if helpful. " +
+        "\n\nYou also have access to code context tools to read and analyze Entity Framework code repositories. " +
+        "Use ReadFile, ListFiles, SearchCode, and AnalyzeEntityFrameworkContext to understand database structure from code. " +
+        "Use AddContextDirectory to add new directories to the allowed list for this session.";
 
     private readonly IChatClient _client;
+    private readonly IOllamaApiClient _ollamaClient;
     private readonly OllamaOptions _options;
     private readonly ILogger<OllamaLlmService> _logger;
     private readonly IQueryExecutor? _queryExecutor;
+    private readonly ICodeContextService? _codeContextService;
 
     public OllamaLlmService(
-        IChatClient client, 
+        IChatClient client,
+        IOllamaApiClient ollamaClient,
         IOptions<OllamaOptions> options, 
         ILogger<OllamaLlmService> logger,
-        IQueryExecutor? queryExecutor = null)
+        IQueryExecutor? queryExecutor = null,
+        ICodeContextService? codeContextService = null)
     {
         _client = client;
+        _ollamaClient = ollamaClient;
         _options = options.Value;
         _logger = logger;
         _queryExecutor = queryExecutor;
+        _codeContextService = codeContextService;
     }
 
     public async Task<LlmResponse> ChatAsync(LlmChatRequest request, CancellationToken cancellationToken = default)
     {
-        var messages = BuildMessages(request);
-        // TODO: Tool calling requires Ollama model with function calling support and proper integration
-        // Current Microsoft.Extensions.AI may not fully support Ollama tool calling yet
-        // Keeping infrastructure in place for when support is available
-
         _logger.LogDebug("Sending chat request to Ollama model {Model}", _options.Model);
 
-        var chatOptions = new ChatOptions
+        // Build Ollama native request using OllamaSharp types
+        var chatRequest = new ChatRequest
         {
-            ModelId = _options.Model
+            Model = _options.Model,
+            Messages = BuildOllamaMessages(request),
+            Tools = BuildOllamaTools(),
+            Stream = false  // Non-streaming mode to get full response with tool calls
         };
 
-        var response = await _client.GetResponseAsync(messages, chatOptions, cancellationToken: cancellationToken);
+        // Use IOllamaApiClient directly - ChatAsync returns IAsyncEnumerable even with Stream=false
+        // We need to collect all chunks to get the final response
+        ChatResponseStream? finalResponse = null;
+        await foreach (var chunk in _ollamaClient.ChatAsync(chatRequest, cancellationToken))
+        {
+            if (chunk != null)
+            {
+                finalResponse = chunk;
+            }
+        }
         
-        // Extract tool calls if present (currently returns empty list)
-        var toolCalls = ExtractToolCalls(response);
+        _logger.LogDebug("Received response from Ollama");
         
-        var text = response.Text ?? string.Empty;
+        // Extract tool calls from the final response
+        var toolCalls = finalResponse?.Message != null 
+            ? ExtractToolCallsFromOllama(finalResponse.Message) 
+            : new List<ToolCallRequest>();
+        
+        var text = finalResponse?.Message?.Content ?? string.Empty;
 
         return new LlmResponse
         {
@@ -74,7 +100,8 @@ public sealed class OllamaLlmService : ILlmService
 
         var chatOptions = new ChatOptions
         {
-            ModelId = _options.Model
+            ModelId = _options.Model,
+            Tools = BuildTools()
         };
 
         await foreach (var update in _client.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
@@ -93,20 +120,53 @@ public sealed class OllamaLlmService : ILlmService
         {
             systemPrompt += "\n\nAvailable database schema (metadata only — no row data):\n" + FormatSchema(schema);
         }
-        messages.Add(new AIChatMessage(ChatRole.System, systemPrompt));
+        messages.Add(new AIChatMessage(AIChatRole.System, systemPrompt));
 
         foreach (var msg in request.Messages)
         {
             var role = msg.Role.ToLowerInvariant() switch
             {
-                "system" => ChatRole.System,
-                "assistant" => ChatRole.Assistant,
-                _ => ChatRole.User
+                "system" => AIChatRole.System,
+                "assistant" => AIChatRole.Assistant,
+                _ => AIChatRole.User
             };
             messages.Add(new AIChatMessage(role, msg.Content));
         }
 
         return messages;
+    }
+
+    private static Message[] BuildOllamaMessages(LlmChatRequest request)
+    {
+        var messages = new List<Message>();
+
+        var systemPrompt = request.SystemPrompt ?? DefaultSystemPrompt;
+        if (request.SchemaContext is { Tables.Count: > 0 } schema)
+        {
+            systemPrompt += "\n\nAvailable database schema (metadata only — no row data):\n" + FormatSchema(schema);
+        }
+        messages.Add(new Message
+        {
+            Role = OllamaChatRole.System,
+            Content = systemPrompt
+        });
+
+        foreach (var msg in request.Messages)
+        {
+            var role = msg.Role.ToLowerInvariant() switch
+            {
+                "system" => OllamaChatRole.System,
+                "assistant" => OllamaChatRole.Assistant,
+                _ => OllamaChatRole.User
+            };
+            messages.Add(new Message
+            {
+                Role = role,
+                Content = msg.Content
+            });
+        }
+
+        return messages.ToArray();
     }
 
     private static string FormatSchema(SchemaContext schema)
@@ -165,6 +225,421 @@ public sealed class OllamaLlmService : ILlmService
         return preceding.Contains("FIX QUERY", StringComparison.OrdinalIgnoreCase);
     }
 
+    private List<AITool> BuildTools()
+    {
+        var tools = new List<AITool>();
+
+        // Add query execution tool (placeholder for when tool calling is supported)
+        // Currently Ollama tool calling may not be fully supported
+        
+        // Add code context tools if service is available
+        if (_codeContextService != null)
+        {
+            tools.Add(AIFunctionFactory.Create(ReadFileAsync, "ReadFile"));
+            tools.Add(AIFunctionFactory.Create(ListFilesAsync, "ListFiles"));
+            tools.Add(AIFunctionFactory.Create(SearchCodeAsync, "SearchCode"));
+            tools.Add(AIFunctionFactory.Create(AnalyzeEntityFrameworkContextAsync, "AnalyzeEntityFrameworkContext"));
+            tools.Add(AIFunctionFactory.Create(AddContextDirectoryAsync, "AddContextDirectory"));
+            tools.Add(AIFunctionFactory.Create(RemoveContextDirectoryAsync, "RemoveContextDirectory"));
+            tools.Add(AIFunctionFactory.Create(ListContextDirectoriesAsync, "ListContextDirectories"));
+        }
+
+        return tools;
+    }
+
+    private IEnumerable<object>? BuildOllamaTools()
+    {
+        if (_codeContextService == null) return null;
+
+        var tools = new List<object>
+        {
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "ReadFile",
+                    description = "Read the content of a specific file",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new Dictionary<string, object>
+                        {
+                            ["path"] = new
+                            {
+                                type = "string",
+                                description = "The path to the file to read"
+                            }
+                        },
+                        required = new[] { "path" }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "ListFiles",
+                    description = "List files in a directory matching a pattern",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new Dictionary<string, object>
+                        {
+                            ["directory"] = new
+                            {
+                                type = "string",
+                                description = "The directory to search in"
+                            },
+                            ["pattern"] = new
+                            {
+                                type = "string",
+                                description = "The file pattern to match (e.g., *.cs, *DbContext.cs)"
+                            }
+                        },
+                        required = new[] { "directory" }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "SearchCode",
+                    description = "Search for code patterns across files",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new Dictionary<string, object>
+                        {
+                            ["searchPattern"] = new
+                            {
+                                type = "string",
+                                description = "The regex pattern to search for"
+                            },
+                            ["directory"] = new
+                            {
+                                type = "string",
+                                description = "The directory to search in"
+                            }
+                        },
+                        required = new[] { "searchPattern" }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "AnalyzeEntityFrameworkContext",
+                    description = "Analyze Entity Framework DbContext classes and extract entity definitions",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new Dictionary<string, object>
+                        {
+                            ["directory"] = new
+                            {
+                                type = "string",
+                                description = "The directory to search for DbContext classes"
+                            }
+                        },
+                        required = Array.Empty<string>()
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "AddContextDirectory",
+                    description = "Add a directory to the allowed list for this chat session",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new Dictionary<string, object>
+                        {
+                            ["directory"] = new
+                            {
+                                type = "string",
+                                description = "The full path to the directory to allow"
+                            }
+                        },
+                        required = new[] { "directory" }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "RemoveContextDirectory",
+                    description = "Remove a directory from the session allowed list",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new Dictionary<string, object>
+                        {
+                            ["directory"] = new
+                            {
+                                type = "string",
+                                description = "The directory path to remove"
+                            }
+                        },
+                        required = new[] { "directory" }
+                    }
+                }
+            },
+            new
+            {
+                type = "function",
+                function = new
+                {
+                    name = "ListContextDirectories",
+                    description = "List all directories currently allowed for code context access",
+                    parameters = new
+                    {
+                        type = "object",
+                        properties = new Dictionary<string, object>(),
+                        required = Array.Empty<string>()
+                    }
+                }
+            }
+        };
+
+        return tools;
+    }
+
+    [System.ComponentModel.Description("Read the content of a specific file")]
+    private async Task<string> ReadFileAsync(
+        [System.ComponentModel.Description("The path to the file to read")] string path,
+        CancellationToken cancellationToken = default)
+    {
+        if (_codeContextService == null) return JsonSerializer.Serialize(new { success = false, error = "Code context service not available" });
+        
+        try
+        {
+            _logger.LogInformation("LLM requested to read file: {Path}", path);
+            var result = await _codeContextService.ReadFileAsync(path, cancellationToken);
+            
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                path = result.Path,
+                sizeBytes = result.SizeBytes,
+                lastModified = result.LastModified,
+                content = result.Content
+            }, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reading file: {Path}", path);
+            return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+        }
+    }
+
+    [System.ComponentModel.Description("List files in a directory matching a pattern")]
+    private async Task<string> ListFilesAsync(
+        [System.ComponentModel.Description("The directory to search in")] string directory,
+        [System.ComponentModel.Description("The file pattern to match (e.g., *.cs, *DbContext.cs)")] string pattern = "*.cs",
+        CancellationToken cancellationToken = default)
+    {
+        if (_codeContextService == null) return JsonSerializer.Serialize(new { success = false, error = "Code context service not available" });
+        
+        try
+        {
+            _logger.LogInformation("LLM requested to list files in {Directory} with pattern {Pattern}", directory, pattern);
+            var result = await _codeContextService.ListFilesAsync(directory, pattern, cancellationToken);
+            
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                directory = result.Directory,
+                totalCount = result.TotalCount,
+                truncated = result.Truncated,
+                files = result.Files.Select(f => new
+                {
+                    path = f.Path,
+                    name = f.Name,
+                    sizeBytes = f.SizeBytes,
+                    lastModified = f.LastModified
+                })
+            }, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing files in {Directory}", directory);
+            return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+        }
+    }
+
+    [System.ComponentModel.Description("Search for code patterns across files")]
+    private async Task<string> SearchCodeAsync(
+        [System.ComponentModel.Description("The regex pattern to search for")] string searchPattern,
+        [System.ComponentModel.Description("The directory to search in")] string directory = ".",
+        CancellationToken cancellationToken = default)
+    {
+        if (_codeContextService == null) return JsonSerializer.Serialize(new { success = false, error = "Code context service not available" });
+        
+        try
+        {
+            _logger.LogInformation("LLM requested code search for pattern: {Pattern} in {Directory}", searchPattern, directory);
+            var result = await _codeContextService.SearchCodeAsync(searchPattern, directory, cancellationToken);
+            
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                searchPattern = result.SearchPattern,
+                totalCount = result.TotalCount,
+                truncated = result.Truncated,
+                matches = result.Matches.Select(m => new
+                {
+                    path = m.FilePath,
+                    line = m.LineNumber,
+                    text = m.LineContent
+                })
+            }, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error searching code in {Directory}", directory);
+            return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+        }
+    }
+
+    [System.ComponentModel.Description("Analyze Entity Framework DbContext classes and extract entity definitions")]
+    private async Task<string> AnalyzeEntityFrameworkContextAsync(
+        [System.ComponentModel.Description("The directory to search for DbContext classes")] string directory = ".",
+        CancellationToken cancellationToken = default)
+    {
+        if (_codeContextService == null) return JsonSerializer.Serialize(new { success = false, error = "Code context service not available" });
+        
+        try
+        {
+            _logger.LogInformation("LLM requested Entity Framework analysis in directory: {Directory}", directory);
+            var contexts = await _codeContextService.AnalyzeEntityFrameworkContextAsync(directory, cancellationToken);
+            
+            return JsonSerializer.Serialize(new
+            {
+                success = true,
+                contextsFound = contexts.Count,
+                contexts = contexts.Select(ctx => new
+                {
+                    contextName = ctx.ContextName,
+                    filePath = ctx.FilePath,
+                    entities = ctx.Entities.Select(e => new
+                    {
+                        name = e.Name,
+                        tableName = e.TableName,
+                        schemaName = e.SchemaName,
+                        properties = e.Properties.Select(p => new
+                        {
+                            name = p.Name,
+                            type = p.Type,
+                            isNullable = p.IsNullable,
+                            isKey = p.IsKey,
+                            columnName = p.ColumnName
+                        }),
+                        navigationProperties = e.NavigationProperties.Select(n => new
+                        {
+                            name = n.Name,
+                            targetEntity = n.TargetEntity,
+                            relationType = n.RelationType
+                        })
+                    })
+                })
+            }, new JsonSerializerOptions { WriteIndented = true });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error analyzing Entity Framework contexts in: {Directory}", directory);
+            return JsonSerializer.Serialize(new { success = false, error = ex.Message });
+        }
+    }
+
+    [System.ComponentModel.Description("Add a directory to the allowed list for this chat session")]
+    private Task<string> AddContextDirectoryAsync(
+        [System.ComponentModel.Description("The full path to the directory to allow")] string directory,
+        CancellationToken cancellationToken = default)
+    {
+        if (_codeContextService == null) return Task.FromResult(JsonSerializer.Serialize(new { success = false, error = "Code context service not available" }));
+        
+        try
+        {
+            _logger.LogInformation("LLM requested to add context directory: {Directory}", directory);
+            _codeContextService.AddAllowedDirectory(directory);
+            
+            return Task.FromResult(JsonSerializer.Serialize(new
+            {
+                success = true,
+                message = $"Directory added to allowed list: {directory}",
+                allowedDirectories = _codeContextService.GetAllowedDirectories()
+            }, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error adding context directory: {Directory}", directory);
+            return Task.FromResult(JsonSerializer.Serialize(new { success = false, error = ex.Message }));
+        }
+    }
+
+    [System.ComponentModel.Description("Remove a directory from the session allowed list")]
+    private Task<string> RemoveContextDirectoryAsync(
+        [System.ComponentModel.Description("The directory path to remove")] string directory,
+        CancellationToken cancellationToken = default)
+    {
+        if (_codeContextService == null) return Task.FromResult(JsonSerializer.Serialize(new { success = false, error = "Code context service not available" }));
+        
+        try
+        {
+            _logger.LogInformation("LLM requested to remove context directory: {Directory}", directory);
+            var removed = _codeContextService.RemoveAllowedDirectory(directory);
+            
+            return Task.FromResult(JsonSerializer.Serialize(new
+            {
+                success = removed,
+                message = removed ? $"Directory removed: {directory}" : $"Directory not found in session list: {directory}",
+                allowedDirectories = _codeContextService.GetAllowedDirectories()
+            }, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error removing context directory: {Directory}", directory);
+            return Task.FromResult(JsonSerializer.Serialize(new { success = false, error = ex.Message }));
+        }
+    }
+
+    [System.ComponentModel.Description("List all directories currently allowed for code context access")]
+    private Task<string> ListContextDirectoriesAsync(
+        CancellationToken cancellationToken = default)
+    {
+        if (_codeContextService == null) return Task.FromResult(JsonSerializer.Serialize(new { success = false, error = "Code context service not available" }));
+        
+        try
+        {
+            _logger.LogInformation("LLM requested list of context directories");
+            var directories = _codeContextService.GetAllowedDirectories();
+            
+            return Task.FromResult(JsonSerializer.Serialize(new
+            {
+                success = true,
+                totalCount = directories.Count,
+                directories = directories,
+                note = "Includes both config-based and session-added directories"
+            }, new JsonSerializerOptions { WriteIndented = true }));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error listing context directories");
+            return Task.FromResult(JsonSerializer.Serialize(new { success = false, error = ex.Message }));
+        }
+    }
+
     // TODO: Enable when Ollama tool calling is properly supported
     /*
     private static List<AITool> BuildTools()
@@ -179,32 +654,123 @@ public sealed class OllamaLlmService : ILlmService
     }
     */
 
-    private List<ToolCallRequest> ExtractToolCalls(ChatResponse response)
+    private List<ToolCallRequest> ExtractToolCallsFromOllama(Message message)
     {
         var toolCalls = new List<ToolCallRequest>();
         
-        // For now, we'll check if the response itself contains function call content
-        // ChatResponse may directly expose tool call information
-        // If Ollama doesn't support tools natively, we may need to parse from text
+        try
+        {
+            // OllamaSharp Message has ToolCalls property
+            if (message?.ToolCalls != null)
+            {
+                foreach (var toolCall in message.ToolCalls)
+                {
+                    if (toolCall?.Function == null) continue;
+
+                    var arguments = new Dictionary<string, object?>();
+                    
+                    // Parse the arguments from the function call
+                    if (toolCall.Function.Arguments != null)
+                    {
+                        try
+                        {
+                            // Arguments is an object - try to convert to dictionary
+                            var json = JsonSerializer.Serialize(toolCall.Function.Arguments);
+                            var deserializedArgs = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(json);
+                            if (deserializedArgs != null)
+                            {
+                                foreach (var kvp in deserializedArgs)
+                                {
+                                    // Convert JsonElement to appropriate type
+                                    arguments[kvp.Key] = kvp.Value.ValueKind switch
+                                    {
+                                        JsonValueKind.String => kvp.Value.GetString(),
+                                        JsonValueKind.Number => kvp.Value.GetDouble(),
+                                        JsonValueKind.True or JsonValueKind.False => kvp.Value.GetBoolean(),
+                                        JsonValueKind.Null => null,
+                                        _ => kvp.Value.ToString()
+                                    };
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+                            _logger.LogWarning(ex, "Failed to parse tool call arguments for {ToolName}", toolCall.Function.Name);
+                        }
+                    }
+                    
+                    toolCalls.Add(new ToolCallRequest
+                    {
+                        ToolCallId = Guid.NewGuid().ToString(),
+                        ToolName = toolCall.Function.Name ?? "UnknownTool",
+                        Arguments = arguments
+                    });
+                    
+                    _logger.LogInformation("Extracted tool call: {ToolName}", toolCall.Function.Name);
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error extracting tool calls from Ollama message");
+        }
         
-        // Return empty list for now - tool calling may need different integration approach
+        _logger.LogInformation("Total tool calls extracted: {Count}", toolCalls.Count);
         return toolCalls;
     }
 
     public async Task<string> ExecuteToolCallAsync(ToolCallRequest toolCall, CancellationToken cancellationToken = default)
     {
-        if (_queryExecutor == null)
-        {
-            return "Error: Query executor not available";
-        }
+        _logger.LogInformation("Executing tool call: {ToolName}", toolCall.ToolName);
 
-        switch (toolCall.ToolName)
+        try
         {
-            case "execute_sql_query":
-                return await ExecuteSqlQueryToolAsync(toolCall.Arguments, cancellationToken);
-            
-            default:
-                return $"Error: Unknown tool '{toolCall.ToolName}'";
+            switch (toolCall.ToolName)
+            {
+                case "execute_sql_query":
+                    return await ExecuteSqlQueryToolAsync(toolCall.Arguments, cancellationToken);
+                
+                case "ReadFile":
+                    if (toolCall.Arguments.TryGetValue("path", out var pathObj) && pathObj is string path)
+                        return await ReadFileAsync(path, cancellationToken);
+                    return JsonSerializer.Serialize(new { success = false, error = "Missing 'path' argument" });
+                
+                case "ListFiles":
+                    var dir = toolCall.Arguments.TryGetValue("directory", out var dirObj) && dirObj is string d ? d : ".";
+                    var pattern = toolCall.Arguments.TryGetValue("pattern", out var patObj) && patObj is string p ? p : "*.cs";
+                    return await ListFilesAsync(dir, pattern, cancellationToken);
+                
+                case "SearchCode":
+                    if (!toolCall.Arguments.TryGetValue("searchPattern", out var searchObj) || searchObj is not string searchPattern)
+                        return JsonSerializer.Serialize(new { success = false, error = "Missing 'searchPattern' argument" });
+                    var searchDir = toolCall.Arguments.TryGetValue("directory", out var sdObj) && sdObj is string sd ? sd : ".";
+                    return await SearchCodeAsync(searchPattern, searchDir, cancellationToken);
+                
+                case "AnalyzeEntityFrameworkContext":
+                    var analysisDir = toolCall.Arguments.TryGetValue("directory", out var adObj) && adObj is string ad ? ad : ".";
+                    return await AnalyzeEntityFrameworkContextAsync(analysisDir, cancellationToken);
+                
+                case "AddContextDirectory":
+                    if (!toolCall.Arguments.TryGetValue("directory", out var addDirObj) || addDirObj is not string addDir)
+                        return JsonSerializer.Serialize(new { success = false, error = "Missing 'directory' argument" });
+                    return await AddContextDirectoryAsync(addDir, cancellationToken);
+                
+                case "RemoveContextDirectory":
+                    if (!toolCall.Arguments.TryGetValue("directory", out var remDirObj) || remDirObj is not string remDir)
+                        return JsonSerializer.Serialize(new { success = false, error = "Missing 'directory' argument" });
+                    return await RemoveContextDirectoryAsync(remDir, cancellationToken);
+                
+                case "ListContextDirectories":
+                    return await ListContextDirectoriesAsync(cancellationToken);
+                
+                default:
+                    return JsonSerializer.Serialize(new { success = false, error = $"Unknown tool '{toolCall.ToolName}'" });
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error executing tool {ToolName}", toolCall.ToolName);
+            return JsonSerializer.Serialize(new { success = false, error = ex.Message });
         }
     }
 

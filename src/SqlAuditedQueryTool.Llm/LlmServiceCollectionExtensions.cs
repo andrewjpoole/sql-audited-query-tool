@@ -12,6 +12,7 @@ public static class LlmServiceCollectionExtensions
     public static IServiceCollection AddLlmServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.Configure<OllamaOptions>(configuration.GetSection(OllamaOptions.SectionName));
+        services.Configure<CodeContextOptions>(configuration.GetSection(CodeContextOptions.SectionName));
 
         // IChatClient is registered by Aspire's AddOllamaApiClient in Program.cs
         services.AddScoped<ILlmService, OllamaLlmService>();
@@ -22,6 +23,10 @@ public static class LlmServiceCollectionExtensions
 
         // Simple completion service - no embeddings needed
         services.AddScoped<ICompletionService, SimpleCompletionService>();
+
+        // Code context services
+        services.AddScoped<ICodeContextService, CodeContextService>();
+        services.AddScoped<CodeContextAssistant>();
 
         return services;
     }

@@ -70,3 +70,27 @@
 - **Models** (`Core/Models/`): QueryRequest, QueryResult, AuditEntry
 - **Tests:** 58 tests in Core.Tests/Security/ — all passing. Covers write blocking, comment/string-literal edge cases, UNION injection, multi-statement, PII detection, row data arrays, hash determinism, tamper detection, null guards.
 - **Security design decisions:** See `.squad/decisions/inbox/faramir-security-contracts.md`
+
+### 2026-02-28: Write Script Simulator Security Review — Phase 1 Approved
+- **Task:** Completed security review of Write Script Simulator feature and backend/frontend implementations
+- **Architecture assessment:** Three-layer defense-in-depth verified:
+  1. **Layer 1 (Keyword Validation):** SimulationService rejects DROP/TRUNCATE/ALTER/CREATE/EXEC/EXECUTE (6 critical keywords). Allows UPDATE/INSERT/DELETE for simulation. Uses compiled regex with word-boundary matching (prevents bypass via aliases).
+  2. **Layer 2 (SHOWPLAN_XML Execution Plan Analysis):** Uses `SET SHOWPLAN_XML ON` to generate execution plans WITHOUT executing statements. Works safely on readonly connections because it returns plan metadata only, never executes the statement.
+  3. **Layer 3 (ReadOnly Database Connection):** `ApplicationIntent=ReadOnly` enforced by ReadOnlyConnectionFactory. SQL Server enforces readonly at connection protocol level. Even if layers 1-2 fail, layer 3 prevents modifications.
+- **Security findings:** 
+  - **Critical issues:** None
+  - **High issues:** None
+  - **Medium issues:** None
+  - **Informational notes (5):**
+    1. Script generation file permissions — verify generated `update.sql` files in `SqlPatches/` have restricted permissions (read-only for non-admins) before deployment
+    2. Repository path validation — ensure `SqlScriptRunner.RepositoryRootPath` is validated to prevent directory traversal attacks via `../../` patterns
+    3. EstimateRows accuracy — document that EstimateRows is a query optimizer estimate, not guaranteed actual count. Users should always preview `query.sql` results before running `update.sql`
+    4. User education — UI should emphasize that execution plans are estimates only — actual execution in production may differ due to parameter sniffing, outdated statistics, or schema changes
+    5. Audit logging recommendation — consider logging all simulation operations to GitHub audit trail (similar to readonly queries) for compliance/forensics
+- **Approval:** ✅ **APPROVED** — Security architecture provides adequate protection for MVP phase. Recommended to address informational notes before general availability.
+- **Key insight:** Readonly connection guarantee makes this feature intrinsically safe. Even if keyword validation or SHOWPLAN fails, readonly enforcement is the last line of defense. This is a fundamentally safer approach than attempting to detect all dangerous patterns in SQL.
+- **Files reviewed:**
+  - Backend: SimulationService.cs, ScriptGeneratorService.cs, API endpoints in Program.cs
+  - Frontend: WriteScriptSimulator.tsx, ScriptGeneratorModal.tsx, API client integration
+  - Configuration: appsettings.json SqlScriptRunner settings
+  - Models: SimulationRequest.cs, SimulationResult.cs, ScriptGenerationRequest.cs

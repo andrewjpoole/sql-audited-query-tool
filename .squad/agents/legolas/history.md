@@ -577,3 +577,34 @@ pm run build succeeds (75 modules, 236.93KB JS gzip 74.06KB)
 - **Pattern:** This is the recommended pattern for Monaco completions — provider fetches all relevant items, Monaco handles filtering/ranking
 - **Key file:** src/SqlAuditedQueryTool.App/ClientApp/src/components/TabbedSqlEditor.tsx lines 114-179
 - **Build verified:** Visual inspection shows changes are minimal and non-breaking
+
+### 2026-02-28T21:45:47Z: Write Script Simulator Frontend — Phase 1 MVP Complete
+- **New feature:** Write Script Simulator mode — full simulation + sql-script-runner script generation UI
+- **Architecture decision:** Separate app mode toggle (Query vs Simulator) — visually distinct with amber/orange theme
+- **Components created:**
+  - WriteScriptSimulator.tsx — main simulator component with Monaco SQL editor, simulation button, results display
+  - ScriptGeneratorModal.tsx — modal for generating sql-script-runner scripts with repository selection, work item ID, purpose, preview
+  - CSS files: WriteScriptSimulator.css and ScriptGeneratorModal.css with amber theme (--sim-accent: #d97706)
+- **API additions in queryApi.ts:**
+  - SimulationResult, ScriptRepository, ScriptGenerationRequest, ScriptGenerationResult types
+  - simulateQuery(), getSimulationRepositories(), generateScripts() functions
+- **UI patterns:**
+  - Amber/orange theme throughout simulator (⚠️ SIMULATION MODE banner, amber buttons, warning colors)
+  - Estimated affected rows with color coding: green (≤10), amber (11-100), red (>100)
+  - Reuses ExecutionPlanView component for plan visualization
+  - Script preview shows both query.sql and update.sql with proper headers and formatting
+- **App.tsx changes:**
+  - Added mode toggle in header: Query | ⚠️ Write Simulator
+  - Dynamic header badge: "Read-Only" vs "⚠️ Simulation"
+  - Conditional rendering: Query mode shows full 3-column layout, Simulator mode shows SchemaTreeView + WriteScriptSimulator
+- **CSS additions to App.css:**
+  - .app-mode-toggle — button group for mode switching
+  - .mode-btn with --active and --simulator variants
+  - .app-header-badge--simulator for amber badge styling
+- **Key architectural insight:** Simulator is self-contained — all state lives in WriteScriptSimulator, App.tsx only handles mode toggle
+- **Visual separation enforced:** Users immediately know they're in simulation mode via amber theme, banner, and badge
+- **Coordination:** Backend API contract defined by Samwise; frontend ready for integration
+- **File paths:**
+  - Components: src/SqlAuditedQueryTool.App/ClientApp/src/components/WriteScriptSimulator.tsx & ScriptGeneratorModal.tsx
+  - API client: src/SqlAuditedQueryTool.App/ClientApp/src/api/queryApi.ts
+  - Main app: src/SqlAuditedQueryTool.App/ClientApp/src/App.tsx & App.css

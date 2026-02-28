@@ -588,3 +588,16 @@
 - When combining semantic similarity scores with lexical prefix matching, the prefix boost MUST scale with match length
 - Otherwise, embedding score variance can overpower constant boosts, causing items to randomly appear/disappear
 - Progressive boosting ensures deterministic behavior: more characters typed = higher confidence = higher rank
+
+### 2026-02-28: Write Script Simulator — Team Coordination Update
+- **Feature Status:** Write Script Simulator Phase 1 MVP completed by Samwise (backend) + Legolas (frontend) + Faramir (security review)
+- **Your Role:** No changes needed to LLM architecture. Simulation feature is independent of autocomplete/chat.
+- **API Changes (informational):**
+  - New endpoints: `/api/simulation/execute`, `/api/simulation/generate-scripts`, `/api/simulation/repositories`
+  - Does not affect: `/api/completions/schema`, `/api/chat`, `/api/schema`, `/api/query/*`
+- **UI Changes (informational):**
+  - New app mode toggle: "Query" vs "⚠️ Write Simulator"
+  - Simulator uses separate components (WriteScriptSimulator.tsx, ScriptGeneratorModal.tsx)
+  - No impact to existing chat panel, query history, or schema tree view
+- **Security (FYI):** Three-layer defense verified. No changes to DataLeakPrevention or AuditIntegrity classes needed at this time.
+- **Next Phase:** LLM integration into simulator may be explored in Phase 2 (ask Andrew if write script suggestions are desired)

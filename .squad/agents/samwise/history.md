@@ -289,3 +289,69 @@ var response = await _client.GetResponseAsync(messages, chatOptions, cancellatio
 - src\SqlAuditedQueryTool.App\Program.cs — line 286-303 (added result data to executedQueries), line 335-347 (added backward-compatible fields)
 **Pattern:** When frontend expects specific response shape (executedQuery/executedResult), ensure backend provides both the modern structure (executedQueries array) and backward-compatible fields. This allows frontend to work correctly whether one or multiple queries were executed.
 **Key learning:** API response format mismatches don't always cause 404s or crashes - they can cause silent failures where the endpoint succeeds but the frontend can't properly handle the response structure. Always verify frontend expectations match backend response shape.
+### 2026-02-28: Write Query Simulator Backend - Phase 1 MVP
+
+**Objective:** Implement backend services, models, interfaces, and API endpoints for the Write Query Simulator feature - allows users to safely validate UPDATE/INSERT/DELETE queries without executing them.
+
+**Architecture decisions:**
+1. **Simulation approach:** Use SQL Server's SET SHOWPLAN_XML ON to get execution plan without executing the query. This is safe even on readonly connections because it only generates the plan, never executes the statement.
+2. **Validation strategy:** Created separate service (SimulationService) with different validation rules than SqlQueryExecutor:
+   - SqlQueryExecutor: Rejects ALL write keywords (INSERT/UPDATE/DELETE/DROP/etc)
+   - SimulationService: Allows UPDATE/INSERT/DELETE but rejects DROP/TRUNCATE/ALTER/CREATE/EXEC
+   - Warns if UPDATE/DELETE missing WHERE clause
+   - Warns if estimated affected rows > 100
+3. **Options pattern:** SqlScriptRunnerOptions uses IOptions<T> for configuration binding with appsettings.json
+4. **Script generation:** Generates two files (query.sql for verification, update.sql for execution) in SqlPatches/{WorkItemId}/ directory
+5. **Dependency placement:** ScriptGeneratorService in Database project (not Core) because it needs IOptions<> and ILogger from Microsoft.Extensions
+
+**Models created (Core project):**
+- SimulationRequest.cs — SQL + metadata for simulation
+- SimulationResult.cs — Validation errors, warnings, estimated rows, execution plan XML
+- ScriptGenerationRequest.cs — Metadata for script generation (repo key, work item ID, purpose, etc)
+- ScriptGenerationResult.cs — Generated file content and paths
+- SqlScriptRunnerOptions.cs — Configuration for repository locations
+
+**Interfaces created (Core project):**
+- ISimulationService.cs — SimulateAsync(request, ct)
+- IScriptGeneratorService.cs — GenerateScripts(request)
+
+**Implementations (Database project):**
+- SimulationService.cs — Uses IConnectionFactory + SHOWPLAN_XML, parses EstimateRows from XML using XDocument
+- ScriptGeneratorService.cs — File generation with metadata headers
+
+**API endpoints (Program.cs):**
+1. POST /api/simulation/execute — Simulates write query, returns validation + execution plan
+2. POST /api/simulation/generate-scripts — Generates sql-script-runner files in repo
+3. GET /api/simulation/repositories — Lists configured repositories with paths
+
+**Configuration (appsettings.json):**
+Added SqlScriptRunner section with ReposBaseDirectory and Repositories dictionary
+
+**Key patterns:**
+- Regex validation using [GeneratedRegex] partial class pattern (same as SqlQueryExecutor)
+- XML parsing with System.Xml.Linq (no extra NuGet needed)
+- EstimateRows extraction from SHOWPLAN_XML root RelOp element
+- Options binding in DatabaseServiceCollectionExtensions.AddDatabaseServices()
+
+**Dependencies added:**
+- Microsoft.Extensions.Options.ConfigurationExtensions v10.0.3 to Database project
+
+**Files created:**
+- src\SqlAuditedQueryTool.Core\Models\SimulationRequest.cs
+- src\SqlAuditedQueryTool.Core\Models\SimulationResult.cs
+- src\SqlAuditedQueryTool.Core\Models\ScriptGenerationRequest.cs
+- src\SqlAuditedQueryTool.Core\Models\ScriptGenerationResult.cs
+- src\SqlAuditedQueryTool.Core\Models\SqlScriptRunnerOptions.cs
+- src\SqlAuditedQueryTool.Core\Interfaces\ISimulationService.cs
+- src\SqlAuditedQueryTool.Core\Interfaces\IScriptGeneratorService.cs
+- src\SqlAuditedQueryTool.Database\SimulationService.cs
+- src\SqlAuditedQueryTool.Database\ScriptGeneratorService.cs
+
+**Files modified:**
+- src\SqlAuditedQueryTool.Database\DatabaseServiceCollectionExtensions.cs — Added service registrations + options binding
+- src\SqlAuditedQueryTool.App\Program.cs — Added 3 endpoints + 2 request DTOs
+- src\SqlAuditedQueryTool.App\appsettings.json — Added SqlScriptRunner configuration
+
+**Build status:** ✅ All projects build successfully, 0 errors
+
+**Next steps:** Frontend implementation (Legolas) will create WriteQuerySimulator.tsx component that consumes these endpoints.

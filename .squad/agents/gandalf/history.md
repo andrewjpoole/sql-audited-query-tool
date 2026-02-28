@@ -269,3 +269,30 @@
 - **Key Point:** The fix WAS applied to the actual code file, not just documented
 - **File:** `src/SqlAuditedQueryTool.App/Program.cs` line 22
 - **Pattern:** `builder.Services.ConfigureAll<Microsoft.Extensions.Http.Resilience.HttpStandardResilienceOptions>(options =>...)`
+
+### 2026-02-28: Write Script Simulator — Phase 1 MVP Complete
+- **Feature:** Write Script Simulator enables safe testing of UPDATE/INSERT/DELETE queries without actual execution
+- **Architecture (3 agents, all successful):**
+  1. **Samwise (Backend):** Implemented SimulationService + ScriptGeneratorService using SHOWPLAN_XML for safe plan generation on readonly connections. Created models (SimulationRequest, SimulationResult, ScriptGenerationRequest, ScriptGenerationResult, SqlScriptRunnerOptions). Wired 3 API endpoints: `/api/simulation/execute`, `/api/simulation/generate-scripts`, `/api/simulation/repositories`
+  2. **Legolas (Frontend):** Created WriteScriptSimulator.tsx and ScriptGeneratorModal.tsx with amber/orange theme (visual distinction from blue query mode). Added mode toggle in App.tsx header: "Query" vs "⚠️ Write Simulator". Self-contained component with own state.
+  3. **Faramir (Security):** Reviewed and approved. Three-layer defense verified: keyword validation (Layer 1) + SHOWPLAN_XML (Layer 2) + ReadOnly connection (Layer 3). No critical findings. 5 informational notes (file permissions, path validation, EstimateRows accuracy, user education, audit logging).
+- **New API Contract:**
+  - `POST /api/simulation/execute` — Takes SQL, returns validation errors/warnings, estimated rows, execution plan XML
+  - `POST /api/simulation/generate-scripts` — Creates query.sql (verification) + update.sql (executable) in SqlPatches/{WorkItemId}/
+  - `GET /api/simulation/repositories` — Lists configured repositories with paths
+- **Files Created (Backend):**
+  - Core models: SimulationRequest.cs, SimulationResult.cs, ScriptGenerationRequest.cs, ScriptGenerationResult.cs, SqlScriptRunnerOptions.cs
+  - Database services: SimulationService.cs, ScriptGeneratorService.cs
+  - API endpoints wired in Program.cs
+- **Files Created (Frontend):**
+  - Components: WriteScriptSimulator.tsx, WriteScriptSimulator.css, ScriptGeneratorModal.tsx, ScriptGeneratorModal.css
+  - App.tsx updated with mode toggle
+  - App.css updated with toggle/badge styles
+  - queryApi.ts updated with simulation endpoints
+- **Configuration:**
+  - appsettings.json: SqlScriptRunner section with repository paths
+  - DatabaseServiceCollectionExtensions.cs: Service registrations + options binding
+- **Build Status:** ✅ All projects build successfully (0 errors)
+- **Security Posture:** Fundamentally safe — readonly connection is last line of defense. Even if SQL validation fails, SQL Server enforces readonly at protocol level.
+- **Key Design Decision:** SHOWPLAN_XML generates plans WITHOUT executing, enabling safe write query validation on readonly connections (unlike SET STATISTICS XML which EXECUTES the query)
+- **Next Steps:** Address 5 informational notes for GA release (file permissions, path validation, EstimateRows docs, user education, audit logging)

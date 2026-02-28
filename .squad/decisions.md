@@ -492,6 +492,62 @@ builder.AddOllamaApiClient("ollamaModel");
 **What:** Implemented progressive prefix boosting that scales with match length.
 **Problem:** Items disappeared as users typed more characters (constant boost regardless of match length).
 **Solution:** Boost scales with lengthRatio: `basePrefixBoost × (1.0 + lengthRatio × 2.0)`
+
+### 2026-02-28: Write Script Simulator Backend Architecture
+**By:** Samwise (Backend Dev)
+**What:** Implemented backend for Write Script Simulator using SHOWPLAN_XML for safe query validation without execution.
+**Key architectural decisions:**
+1. **Separate validation service:** Created `SimulationService` as a distinct service from `SqlQueryExecutor` with different validation rules:
+   - SqlQueryExecutor rejects ALL write operations (INSERT/UPDATE/DELETE/DROP/etc)
+   - SimulationService allows UPDATE/INSERT/DELETE but rejects DROP/TRUNCATE/ALTER/CREATE/EXEC
+   - This separation keeps readonly query execution strictly safe while enabling write query validation
+2. **SHOWPLAN_XML for safety:** Uses `SET SHOWPLAN_XML ON` to generate execution plans without executing queries. This works on readonly connections because it only returns the plan, never executes the statement.
+3. **XML parsing for estimated rows:** Parses execution plan XML using `System.Xml.Linq` to extract `EstimateRows` attribute from root `RelOp` element. No additional NuGet packages needed.
+4. **Options pattern for configuration:** `SqlScriptRunnerOptions` uses `IOptions<T>` pattern bound from appsettings.json, configured in `DatabaseServiceCollectionExtensions`.
+5. **Service placement:** `ScriptGeneratorService` placed in Database project (not Core) because it depends on `Microsoft.Extensions.Options` and `Microsoft.Extensions.Logging`. Keeps Core clean and dependency-free.
+6. **Script generation format:** Generates two files in `SqlPatches/{WorkItemId}/`:
+   - `query.sql` — Verification query template (user fills in SELECT to preview affected rows)
+   - `update.sql` — Executable script with metadata header (purpose, timestamp, estimated rows, etc)
+**API endpoints:**
+- `POST /api/simulation/execute` — Validate + generate execution plan
+- `POST /api/simulation/generate-scripts` — Create sql-script-runner files
+- `GET /api/simulation/repositories` — List configured repos
+**Why:** Readonly database access is maintained — SHOWPLAN_XML never executes write statements. Separate service allows different validation rules without complicating SqlQueryExecutor. Estimated row count gives users safety check before generating scripts. Generated scripts follow sql-script-runner conventions for production deployments.
+**Constraints:** Requires `Microsoft.Extensions.Options.ConfigurationExtensions` package in Database project. Repository directories must exist before script generation. Estimated rows parsed as integer (rounded from double EstimateRows attribute).
+
+### 2026-02-28: Write Script Simulator Frontend Architecture
+**By:** Legolas (Frontend Dev)
+**What:** Implemented mode-based UI architecture with visual separation for Write Script Simulator.
+**Key decisions:**
+1. **Mode Toggle:** Added "Query" vs "⚠️ Write Simulator" toggle in the app header
+2. **Visual Theme:** Amber/orange color scheme for the entire simulator (distinct from blue read-only theme)
+3. **Self-contained Components:** WriteScriptSimulator and ScriptGeneratorModal are independent, with no state leakage to main query UI
+4. **Conditional Rendering:** App.tsx conditionally renders different layouts based on mode
+**Components created:**
+- `WriteScriptSimulator.tsx` + `.css` — Main simulator interface with query input, execution plan display, estimated rows preview
+- `ScriptGeneratorModal.tsx` + `.css` — Modal for creating sql-script-runner files with repository/workitem selection
+**API integration:**
+- Consumes `POST /api/simulation/execute` for plan generation
+- Consumes `POST /api/simulation/generate-scripts` for file creation
+- Consumes `GET /api/simulation/repositories` for repository selection
+**Why:** Clear mental model (visual distinction is immediate). Amber warning theme reinforces caution. Simulator doesn't affect query history or state. Components like ExecutionPlanView are shared between modes for consistency.
+**Implementation notes:** Amber theme CSS variables: `--sim-accent: #d97706`, `--sim-banner-bg: #78350f`. Mode state lives in App.tsx, all simulation state in WriteScriptSimulator.tsx.
+
+### 2026-02-28: Write Script Simulator Security Review
+**By:** Faramir (Security)
+**What:** Completed security review of Write Script Simulator feature with three-layer defense-in-depth architecture.
+**Assessment:**
+1. **Keyword Validation (Layer 1)** — SimulationService rejects DROP/TRUNCATE/ALTER/CREATE/EXEC/EXECUTE; allows UPDATE/INSERT/DELETE for simulation. Compiled regex with word-boundary matching.
+2. **SHOWPLAN_XML Execution Plan Analysis (Layer 2)** — `SET SHOWPLAN_XML ON` generates execution plans WITHOUT executing statements. Works safely on readonly connections.
+3. **ReadOnly Database Connection (Layer 3)** — `ApplicationIntent=ReadOnly` enforced by ReadOnlyConnectionFactory. SQL Server enforces readonly at protocol level.
+**Status:** ✅ APPROVED WITH NOTES
+**Informational notes:**
+1. Script generation file permissions — verify `update.sql` files have restricted permissions before deployment
+2. Repository path validation — ensure `SqlScriptRunner.RepositoryRootPath` validates against directory traversal attacks
+3. EstimateRows accuracy — document that query optimizer estimates may differ from actual execution
+4. User education — UI should emphasize execution plans are estimates only
+5. Audit logging recommendation — consider logging all simulation operations to GitHub audit trail for compliance
+**Impact:** Feature provides adequate protection for MVP phase. Recommended to address informational notes before general availability.
 **Example:** "SELECT" keyword: "s"→643pts, "se"→786pts, "sel"→929pts (monotonically increasing).
 **Impact:** Autocomplete deterministic and predictable.
 

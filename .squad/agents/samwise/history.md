@@ -48,6 +48,13 @@
 - **Fix applied:** Added `builder.Services.ConfigureHttpJsonOptions(options => { options.SerializerOptions.PropertyNameCaseInsensitive = true; })` in Program.cs to enable case-insensitive JSON property name matching across all API endpoints.
 - **Logging enhancement:** Added request logging to `/api/chat` endpoint to track incoming request parameters (SystemPrompt presence, message count, stream flag, includeSchema flag) for easier debugging.
 - **Impact:** This fix resolves the "Failed to fetch" error in the chat interface and makes all API endpoints more resilient to casing differences between frontend (camelCase) and backend (PascalCase) conventions.
+
+### 2026-02-28: Markdown File Cleanup Task
+- **Assigned Task:** Clean up stale markdown files from repo root
+- **Execution:** Deleted 3 obsolete files (BACKEND_IMPLEMENTATION_COMPLETE.md, TEST_CODE_CONTEXT.md, test-tool-calls.md)
+- **Also moved:** 3 decision records to `.squad/decisions/inbox/` (TOOL_CALLS_FIX.md, WRITE_SIMULATOR_PLAN.md, .copilot/ollama-mcp-feasibility.md)
+- **Outcome:** Repository root cleaner, all decisions centralized in `.squad/` system
+- **Impact:** Maintains clean project structure, preserves institutional knowledge in structured audit trail
 - **Lesson learned:** ASP.NET Core minimal APIs use System.Text.Json which is case-sensitive by default. When working with JavaScript/TypeScript frontends that use camelCase, always configure `PropertyNameCaseInsensitive = true` for better interoperability.
 
 ### 2026-02-22: DI Scoping and Audit Resilience Fixes

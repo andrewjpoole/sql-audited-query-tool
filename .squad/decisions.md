@@ -392,3 +392,153 @@ builder.AddOllamaApiClient("ollamaModel");
 3. `AddOllamaApiClient("ollamaModel")` — registers named client
 4. HttpClient creation triggers lambda → applies ConfigureAll config
 **Impact:** All HttpClients (including Ollama) now respect 5-minute timeout. No more 30-second premature timeouts on long-running LLM operations. `/api/chat` tool calling loop fully functional.
+
+### 2026-02-24T21:14:43Z: User Directive — Stop Auto-Committing
+**By:** Andrew (via Copilot)
+**What:** Stop auto-committing changes — user will review and commit manually
+**Why:** User request — wants to see all changes before they're committed
+
+### 2026-02-24T17:15:43Z: User Directive — Test Coverage Required
+**By:** Andrew (via Copilot)
+**What:** Add tests for all functionality so new features don't break old ones
+**Why:** User request — ensure test coverage for autocomplete and other features to prevent regressions
+
+### 2026-02-24: Ollama Tool Calls Fix — Switched to OllamaSharp Direct API
+**By:** Previous session (captured by Samwise)
+**What:** Fixed Ollama tool calls not working by switching from Microsoft.Extensions.AI IChatClient to OllamaSharp's IOllamaApiClient for non-streaming chat. IChatClient's ChatResponse doesn't expose tool_calls that Ollama returns. Streaming unchanged (still uses IChatClient).
+**Why:** Tool calls are critical for code context features. IChatClient abstraction was hiding tool call data from Ollama responses.
+**Key Changes:**
+- Type aliases for clarity (AIChatMessage, AIChatRole, OllamaChatRole)
+- Constructor: `IOllamaApiClient` parameter
+- ChatAsync rewritten to use `OllamaApiClient` directly for non-streaming chat
+- New BuildOllamaMessages() and BuildOllamaTools() methods
+- ExtractToolCallsFromOllama() now extracts from OllamaSharp Message object
+- Removed debug logging
+**Impact:** Tool calls now work properly. Streaming still uses IChatClient. All 96 tests passing.
+
+### 2026-02-26: Write Query Simulator — Feature Plan
+**By:** Previous session (captured by Samwise)
+**What:** Comprehensive implementation plan for Write Script Simulator/Predictor feature. Allows users to craft UPDATE/INSERT/DELETE statements, simulate effects using SHOWPLAN_XML without execution, and generate sql-script-runner compatible scripts.
+**Why:** Users discover issues needing fixes via write queries, but tool is strictly read-only. This bridges gap safely by simulating writes and generating commit-ready scripts.
+**Architecture:** Dual-pane UI (script editor + results), SimulationService using SHOWPLAN_XML, ScriptGeneratorService creating query.sql + update.sql in SqlPatches/{WorkItemId}/ folders.
+**Status:** Comprehensive plan complete, ready for phase 1 implementation (MVP).
+
+### 2026-02-24: Execution Plan Frontend Implementation — Completed
+**By:** Legolas (Frontend Specialist)
+**What:** Successfully implemented frontend portion of execution plan feature:
+- Installed `html-query-plan` v2.6.1
+- Added "Show Plan" checkbox to TabbedSqlEditor toolbar
+- Updated QueryResult interface with executionPlanXml field
+- Created ExecutionPlanView component with Visual/XML toggle
+- Updated QueryResults component with plan tab
+- State persisted to localStorage
+**Status:** Frontend ready for backend integration (Samwise completed backend on same date).
+
+### 2026-02-24: Execution Plan Backend Implementation — Completed
+**By:** Samwise (Backend Specialist)
+**What:** Successfully implemented backend portion of execution plan feature:
+- Added IncludeExecutionPlan flag to QueryRequest
+- Added ExecutionPlanXml field to QueryResult
+- SqlQueryExecutor wraps SQL with SET STATISTICS XML ON/OFF when flag true
+- Plan detection: last result set with 1 row, 1 column, ShowPlanXML content
+- API updated: /api/query/execute accepts includeExecutionPlan, returns executionPlanXml
+- Added 6 new tests; all 85 tests passing
+**Status:** Backend complete and tested. Ready for frontend integration.
+
+### 2026-02-23: Monaco Completion Provider — Phase 1 Implementation Complete
+**By:** Legolas (Frontend Dev)
+**What:** Implemented Phase 1 Monaco completion provider for schema-aware SQL autocomplete:
+- Registered CompletionItemProvider with trigger characters ['.', ' ']
+- Fetches completions from /api/completions/schema
+- Graceful degradation on API failure (silent, no error shown)
+- Memory management: proper cleanup on unmount
+**Status:** Frontend ready, awaiting backend endpoint from Samwise and embedding service from Radagast.
+
+### 2026-02-23: Monaco Tab Result Tracking — Implemented
+**By:** Legolas (Frontend Dev)
+**What:** Implemented per-tab query result storage and vertical result set stacking:
+- Results keyed by Monaco tab ID (UUID)
+- Active tab tracked separately, displayed result computed from active tab
+- Multiple result sets stack vertically (SSMS pattern) instead of tabbed
+- Each result set has individual scrolling
+**Status:** Implemented, working correctly.
+
+### 2026-02-24: Hot Reload Does Not Detect New Files
+**By:** Radagast (LLM Engineer)
+**What:** Documented that Aspire hot reload watches for changes to existing files, NOT new files being added.
+**Decision:** When adding new files:
+1. Always do full rebuild cycle (stop → dotnet build → start)
+2. Don't rely on Aspire restart alone
+3. Track new files in git immediately (prevents hot reload issues)
+**Impact:** Prevents "fix not working" debugging sessions. Extra manual step but ensures DLLs contain latest code.
+
+### 2026-02-25: Disable Monaco Built-in SQL Autocomplete
+**By:** Radagast (LLM Engineer)
+**What:** Disabled Monaco's built-in suggestion providers to eliminate race condition where suggestions appeared/disappeared.
+**Problem:** Multiple autocomplete sources (built-in SQL keywords, word-based, embedding-based) firing simultaneously caused flickering.
+**Solution:** Disabled quickSuggestions and wordBasedSuggestions, keep only custom embedding provider.
+**Impact:** Stable, predictable autocomplete behavior. Single source of truth for suggestions.
+
+### 2026-02-22: Ollama MCP Integration — Technical Feasibility Assessment
+**By:** Radagast (LLM Engineer)
+**What:** Assessed feasibility of connecting Ollama to SQL Server MCP. Conclusion: YES, via intermediary bridge (recommended: TypeScript ollama-mcp-bridge).
+**Key Finding:** Ollama has tool calling (v0.6+) but no native MCP support. Bridge solution translates Ollama's tool calling API to MCP protocol.
+**Options Evaluated:** TypeScript bridge (recommended, 962 stars), Python bridge, custom .NET client, REST wrapper.
+**Security Update:** Local Ollama CAN access database data (data never leaves environment). Updated SQL Server MCP safety assessment.
+**Recommendation:** Option A (TypeScript bridge) — proven, low-medium complexity (4-8 hours total).
+
+### 2026-02-23: Progressive Prefix Boost for Autocomplete
+**By:** Radagast (LLM Engineer)
+**What:** Implemented progressive prefix boosting that scales with match length.
+**Problem:** Items disappeared as users typed more characters (constant boost regardless of match length).
+**Solution:** Boost scales with lengthRatio: `basePrefixBoost × (1.0 + lengthRatio × 2.0)`
+**Example:** "SELECT" keyword: "s"→643pts, "se"→786pts, "sel"→929pts (monotonically increasing).
+**Impact:** Autocomplete deterministic and predictable.
+
+### 2026-02-23: SQL Context-Aware Autocomplete Filtering
+**By:** Radagast (LLM Engineer)
+**What:** Implemented SQL context-aware filtering for embedding-based autocomplete.
+**Problem:** Autocomplete wasn't SQL-aware — showed columns when users typed "FROM", mixed tables with columns.
+**Solution:** 6 context types detected via regex (AfterFrom→tables only, AfterTableDot→columns only, etc.):
+- Fetch top 50 results from vector search
+- Apply context-based filtering using metadata properties
+- Preserve semantic similarity scoring within filtered results
+**Impact:** User experience improved — right suggestions at right cursor positions.
+
+### 2026-02-23: SQL Keywords Added to Autocomplete Vector Store
+**By:** Radagast (LLM Engineer)
+**What:** Added 50+ common T-SQL keywords to vector store during schema embedding initialization.
+**Problem:** Typing "SELEC" showed no suggestions (keywords never embedded).
+**Solution:** SchemaEmbeddingService.AddSqlKeywords() embeds keywords in "keyword" category at startup.
+**Keywords:** Core SQL (SELECT, FROM, WHERE), operators (AND, OR, IN), aggregates (COUNT, SUM), functions (CAST, SUBSTRING), advanced (UNION, WITH, OVER).
+**Impact:** Autocomplete always provides SQL keyword hints. Typing "SELEC" now shows "SELECT".
+
+### 2026-02-23: Code Review — Security Classes and Production Readiness
+**By:** Gandalf (Lead)
+**What:** Before production, integrate three unused security classes (DataLeakPrevention, AuditIntegrity, SchemaEmbeddingService).
+**DataLeakPrevention (CRITICAL):** Designed but not called. Validates LLM payloads contain only schema metadata. Integration: SchemaMetadataProvider, OllamaLlmService.
+**AuditIntegrity (IMPORTANT):** Fully implemented but GitHubAuditLogger uses simplified hash. Replace with AuditIntegrity.GenerateAuditHash().
+**SchemaEmbeddingService (OPTIONAL):** Never registered in DI. Register AddHostedService when embeddings enabled.
+**Rationale:** Security classes non-negotiable for production. Better to enforce now than retrofit after incidents.
+**Status:** Recommendation filed, awaiting implementation.
+
+### 2026-02-23: Execution Plan Feature Architecture — Gandalf
+**By:** Gandalf (Lead)
+**What:** Architecture proposal for execution plan feature. Strategy: `SET STATISTICS XML ON` wrapping user query.
+**Why:** Estimated plan only doesn't execute; statistics XML executes query AND appends actual plan as final result set.
+**Design:** Backend wraps SQL, detects plan result set (1 row, 1 column, XML), frontend renders with html-query-plan library, visual + XML toggle.
+**Security:** Plans show schema metadata (index names, join strategies), estimated row counts only — same exposure as SchemaTreeView.
+**Performance:** 5-10% overhead when enabled, opt-in only (default OFF).
+**Files Affected:** QueryRequest, QueryResult, SqlQueryExecutor, ExecutionPlanView component, QueryResults component.
+**Status:** Architecture complete, implementation ready.
+
+### 2026-02-23: Ollama Embeddings for Monaco SQL Autocomplete
+**By:** Gandalf (Lead)
+**What:** Architecture proposal for embedding-based SQL autocomplete. Three approaches: schema completions (Phase 1), inline suggestions (Phase 2), semantic search (Phase 3).
+**Embedding Model:** `nomic-embed-text` (768-dim, 8192 token context, fast inference).
+**Vector Store:** In-memory for Phase 1-2 (no new infrastructure).
+**Similarity Search:** Backend-only (security boundary).
+**Monaco Integration:** CompletionItemProvider (schema), InlineCompletionsProvider (history).
+**Security:** No data exposure (embeddings from schema metadata + query text only). Readonly enforcement unchanged.
+**Phased:** Phase 1 (schema) → Phase 2 (inline) → Phase 3 (semantic search).
+**Status:** Architecture complete, Phase 1 frontend implemented, backend in progress.

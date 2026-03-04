@@ -1,0 +1,222 @@
+.script-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.script-modal {
+  background: var(--bg-secondary);
+  border: 1px solid #d97706;
+  border-radius: 8px;
+  width: 90%;
+  max-width: 900px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 20px 60px rgba(217, 119, 6, 0.3);
+}
+
+.script-modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 20px;
+  background: #78350f;
+  border-bottom: 2px solid #d97706;
+  border-radius: 8px 8px 0 0;
+}
+
+.script-modal-header h2 {
+  font-size: 18px;
+  font-weight: 600;
+  color: #fbbf24;
+  margin: 0;
+}
+
+.script-modal-close {
+  background: none;
+  border: none;
+  color: #fbbf24;
+  font-size: 24px;
+  cursor: pointer;
+  padding: 0;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 4px;
+  transition: background 0.15s;
+}
+
+.script-modal-close:hover {
+  background: rgba(251, 191, 36, 0.1);
+}
+
+.script-modal-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.script-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+
+.script-modal-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.script-modal-field label {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+.script-modal-field input,
+.script-modal-field select,
+.script-modal-field textarea {
+  background: var(--bg-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 12px;
+  color: var(--text-primary);
+  font-size: 14px;
+  font-family: inherit;
+  transition: border-color 0.15s;
+}
+
+.script-modal-field input:focus,
+.script-modal-field select:focus,
+.script-modal-field textarea:focus {
+  outline: none;
+  border-color: #d97706;
+}
+
+.script-modal-field textarea {
+  resize: vertical;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+}
+
+.script-modal-loading,
+.script-modal-error {
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 14px;
+}
+
+.script-modal-loading {
+  color: var(--text-secondary);
+  background: var(--bg-primary);
+}
+
+.script-modal-error {
+  color: #fca5a5;
+  background: #450a0a;
+}
+
+.script-modal-preview {
+  margin-top: 24px;
+}
+
+.script-modal-preview h3 {
+  font-size: 14px;
+  font-weight: 600;
+  color: #fbbf24;
+  margin-bottom: 8px;
+  margin-top: 16px;
+}
+
+.script-modal-preview h3:first-child {
+  margin-top: 0;
+}
+
+.script-modal-code {
+  background: var(--bg-primary);
+  border: 1px solid #d97706;
+  border-radius: 4px;
+  padding: 12px;
+  font-family: 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 13px;
+  color: var(--text-primary);
+  overflow-x: auto;
+  white-space: pre;
+  line-height: 1.5;
+}
+
+.script-modal-result {
+  margin-top: 16px;
+  padding: 12px;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.script-modal-result--success {
+  background: #064e3b;
+  color: #6ee7b7;
+  border-left: 3px solid var(--success);
+}
+
+.script-modal-result--error {
+  background: #450a0a;
+  color: #fca5a5;
+  border-left: 3px solid #ef4444;
+}
+
+.script-modal-footer {
+  display: flex;
+  gap: 12px;
+  padding: 16px 20px;
+  background: var(--bg-tertiary);
+  border-top: 1px solid var(--border);
+  border-radius: 0 0 8px 8px;
+  justify-content: flex-end;
+}
+
+.script-modal-btn {
+  padding: 8px 16px;
+  border: none;
+  border-radius: 4px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.script-modal-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.script-modal-btn--primary {
+  background: #d97706;
+  color: #fff;
+}
+
+.script-modal-btn--primary:hover:not(:disabled) {
+  background: #b45309;
+}
+
+.script-modal-btn--secondary {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+}
+
+.script-modal-btn--secondary:hover:not(:disabled) {
+  background: var(--bg-primary);
+  border-color: #d97706;
+}

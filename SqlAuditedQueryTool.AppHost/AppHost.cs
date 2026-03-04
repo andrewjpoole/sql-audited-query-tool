@@ -11,6 +11,7 @@ var db = sql.AddDatabase("db")
     .WithDatabaseSeeding(Path.Combine(builder.AppHostDirectory, "..", "database", "seed.sql"));
 
 var ollama = builder.AddOllama("ollama")
+    .WithImageTag("0.17.4")
     .WithDataVolume()
     .WithGPUSupport()
     .WithLifetime(ContainerLifetime.Persistent)

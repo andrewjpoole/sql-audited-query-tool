@@ -503,6 +503,74 @@ app.MapGet("/api/query/history", async (IQueryHistoryStore historyStore, int? li
     }));
 });
 
+// === Write Script Simulator endpoints ===
+
+// Simulate a write query — returns execution plan without executing
+app.MapPost("/api/simulation/execute", async (
+    SimulateRequest request,
+    ISimulationService simulationService,
+    CancellationToken ct) =>
+{
+    var simRequest = new SimulationRequest
+    {
+        Sql = request.Sql,
+        RequestedBy = "anonymous" // TODO: replace with authenticated user
+    };
+    var result = await simulationService.SimulateAsync(simRequest, ct);
+    return Results.Ok(new
+    {
+        isValid = result.IsValid,
+        validationErrors = result.ValidationErrors,
+        warnings = result.Warnings,
+        estimatedAffectedRows = result.EstimatedAffectedRows,
+        executionPlanXml = result.ExecutionPlanXml,
+        executionMilliseconds = result.ExecutionMilliseconds,
+        succeeded = result.Succeeded,
+        errorMessage = result.ErrorMessage
+    });
+});
+
+// Generate sql-script-runner scripts
+app.MapPost("/api/simulation/generate-scripts", (
+    GenerateScriptsRequest request,
+    IScriptGeneratorService scriptGeneratorService) =>
+{
+    var genRequest = new ScriptGenerationRequest
+    {
+        Sql = request.Sql,
+        RepositoryKey = request.RepositoryKey,
+        WorkItemId = request.WorkItemId,
+        Purpose = request.Purpose,
+        ExpectedAffectedRows = request.ExpectedAffectedRows,
+        RequestedBy = "anonymous", // TODO: replace with authenticated user
+        DatabaseName = request.DatabaseName
+    };
+    var result = scriptGeneratorService.GenerateScripts(genRequest);
+    
+    if (!result.Succeeded)
+        return Results.BadRequest(new { message = result.ErrorMessage });
+    
+    return Results.Ok(new
+    {
+        succeeded = result.Succeeded,
+        querySqlContent = result.QuerySqlContent,
+        updateSqlContent = result.UpdateSqlContent,
+        outputDirectory = result.OutputDirectory,
+        errorMessage = result.ErrorMessage
+    });
+});
+
+// List configured sql-script-runner repositories
+app.MapGet("/api/simulation/repositories", (IOptions<SqlScriptRunnerOptions> options) =>
+{
+    return Results.Ok(options.Value.Repositories.Select(kvp => new
+    {
+        key = kvp.Key,
+        name = kvp.Value,
+        path = Path.Combine(options.Value.ReposBaseDirectory, kvp.Value)
+    }));
+});
+
 // Chat history endpoints
 app.MapGet("/api/chat/sessions", async (IChatHistoryStore chatHistoryStore, int? limit) =>
 {
@@ -576,3 +644,5 @@ record ChatRequest(Guid? SessionId, string? SystemPrompt, List<ChatMessageDto> M
 record ChatMessageDto(string Role, string Content);
 record QuerySuggestRequest(string NaturalLanguageRequest);
 record ExecuteQueryRequest(string Sql, string? Source, ExecutionPlanMode? ExecutionPlanMode);
+record SimulateRequest(string Sql);
+record GenerateScriptsRequest(string Sql, string RepositoryKey, int WorkItemId, string Purpose, int ExpectedAffectedRows, string? DatabaseName);

@@ -597,4 +597,22 @@ builder.AddOllamaApiClient("ollamaModel");
 **Monaco Integration:** CompletionItemProvider (schema), InlineCompletionsProvider (history).
 **Security:** No data exposure (embeddings from schema metadata + query text only). Readonly enforcement unchanged.
 **Phased:** Phase 1 (schema) → Phase 2 (inline) → Phase 3 (semantic search).
-**Status:** Architecture complete, Phase 1 frontend implemented, backend in progress.
+**Status:** Architecture complete, Phase 1 frontend implemented, backend in progress.### 2026-02-24: Broaden Code Analysis from EF-Only to All Database Patterns
+**By:** Radagast (LLM Engineer)
+**What:** Replaced `AnalyzeEntityFrameworkContext` tool with broader `AnalyzeCode` tool.
+**Problem:** LLM could only understand EF Core; applications use Dapper, ADO.NET for micro-ORMs and performance-critical paths.
+**Solution:** New tool analyzes ALL C# classes in directory, detects EF Core (inheritance check), Dapper (string matching), ADO.NET (string matching). Provides class-level summaries with technology-specific details.
+**Implementation:** ClassAnalysis with PropertySummary/MethodSummary (lightweight), DapperUsage/AdoNetUsage (detailed with line numbers, SQL snippets), EntityFrameworkContext (embedded for EF classes).
+**Rationale:** Comprehensive coverage. LLM can suggest queries across all database technologies. Backward compatible — EF analysis remains detailed via embedded EfContexts property.
+**Alternatives Rejected:** Separate tools per technology (complexity), per-method usage tracking (verbose), semantic model analysis (adds compilation requirements).
+**Impact:** LLM understands Dapper/ADO.NET patterns. No breaking changes.
+**Status:** Implemented. Radagast completed CodeContextService.AnalyzeCodeAsync(), updated CodeContextAssistant and OllamaLlmService registrations.### 2026-03-03: Code Analysis Model Hierarchy
+**By:** Samwise (Backend Dev)
+**What:** Created two-tier model hierarchy for comprehensive code analysis.
+**Tier 1 (General):** ClassAnalysis with PropertySummary (lightweight).
+**Tier 2 (EF-Specific):** EntityDefinition with PropertyDefinition (includes IsKey, ColumnName, MaxLength, etc.).
+**Usage Tracking:** DapperUsage and AdoNetUsage with FilePath, ClassName, MethodName, LineNumber, QueryType, SqlSnippet.
+**Rationale:** Separation of concerns. General classes don't need EF metadata. Performance — lightweight analysis for general, detailed only for EF. Audit trail compatibility with line number tracking.
+**Alternatives Rejected:** Single unified property model (pollutes general analysis), aggregate usage at class level (loses granularity), minimal tracking without line numbers (insufficient for audit).
+**Consequences:** ✅ Clear separation, audit support, backward compatible. ⚠️ Two property models (developers must choose).
+**Status:** Implemented. Samwise updated CodeAnalysisResult, ClassAnalysis, MethodSummary, PropertySummary, DapperUsage, AdoNetUsage models and ICodeContextService.AnalyzeCodeAsync interface method.

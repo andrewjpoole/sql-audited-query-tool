@@ -1,0 +1,141 @@
+.write-simulator-editor {
+  --sim-accent: #d97706;        /* amber-600 */
+  --sim-accent-hover: #b45309;  /* amber-700 */
+  --sim-accent-light: #fbbf24;  /* amber-400 */
+  --sim-accent-bg: #451a03;     /* amber-950 */
+  --sim-banner-bg: #78350f;     /* amber-900 */
+  --sim-warning-bg: #713f12;    /* yellow-900 */
+  --sim-error-bg: #450a0a;      /* red-950 */
+
+  display: flex;
+  flex-direction: column;
+}
+
+.write-simulator-banner {
+  background: var(--sim-banner-bg);
+  color: var(--sim-accent-light);
+  padding: 4px 16px;
+  font-weight: 600;
+  font-size: 12px;
+  text-align: center;
+  border-bottom: 2px solid var(--sim-accent);
+  flex-shrink: 0;
+}
+
+.write-simulator-toolbar {
+  display: flex;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--bg-secondary);
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.write-simulator-btn {
+  padding: 4px 12px;
+  border: none;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+.write-simulator-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.write-simulator-btn--simulate {
+  background: var(--sim-accent);
+  color: #fff;
+}
+
+.write-simulator-btn--simulate:hover:not(:disabled) {
+  background: var(--sim-accent-hover);
+}
+
+.write-simulator-btn--create {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--sim-accent);
+}
+
+.write-simulator-btn--create:hover:not(:disabled) {
+  background: var(--sim-accent-bg);
+  border-color: var(--sim-accent-light);
+}
+
+.write-simulator-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 100%;
+  color: var(--text-secondary);
+  font-size: 14px;
+  padding: 24px;
+}
+
+.write-simulator-results {
+  padding: 16px;
+  overflow-y: auto;
+  height: 100%;
+}
+
+.write-simulator-section {
+  margin-bottom: 16px;
+}
+
+.write-simulator-section h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: var(--text-primary);
+}
+
+.write-simulator-section--error {
+  background: var(--sim-error-bg);
+  padding: 12px;
+  border-radius: 4px;
+  border-left: 3px solid #ef4444;
+}
+
+.write-simulator-section--error h3 {
+  color: #ef4444;
+}
+
+.write-simulator-section--error ul {
+  color: #fca5a5;
+  margin-left: 20px;
+}
+
+.write-simulator-section--warning {
+  background: var(--sim-warning-bg);
+  padding: 12px;
+  border-radius: 4px;
+  border-left: 3px solid var(--sim-accent-light);
+}
+
+.write-simulator-section--warning h3 {
+  color: var(--sim-accent-light);
+}
+
+.write-simulator-section--warning ul {
+  color: #fde68a;
+  margin-left: 20px;
+}
+
+.write-simulator-affected-rows {
+  font-size: 28px;
+  font-weight: 700;
+  margin-top: 4px;
+}
+
+.write-simulator-footer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: right;
+}

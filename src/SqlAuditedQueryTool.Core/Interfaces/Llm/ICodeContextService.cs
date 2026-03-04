@@ -28,6 +28,11 @@ public interface ICodeContextService
     Task<List<EntityFrameworkContext>> AnalyzeEntityFrameworkContextAsync(string directory = ".", CancellationToken cancellationToken = default);
 
     /// <summary>
+    /// Analyze all application code in a directory with special attention to database-related patterns (EF Core, Dapper, ADO.NET).
+    /// </summary>
+    Task<CodeAnalysisResult> AnalyzeCodeAsync(string directory = ".", CancellationToken cancellationToken = default);
+
+    /// <summary>
     /// Add a directory to the allowed list for this session.
     /// </summary>
     void AddAllowedDirectory(string directory);

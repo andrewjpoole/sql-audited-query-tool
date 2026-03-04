@@ -162,6 +162,72 @@ public sealed class CodeContextService : ICodeContextService
         };
     }
 
+    public async Task<CodeAnalysisResult> AnalyzeCodeAsync(
+        string directory = ".",
+        CancellationToken cancellationToken = default)
+    {
+        var normalizedDir = NormalizePath(directory);
+        ValidateDirectoryPath(normalizedDir);
+
+        _logger.LogInformation("Analyzing application code in: {Directory}", normalizedDir);
+
+        var classes = new List<ClassAnalysis>();
+        var dirInfo = new DirectoryInfo(normalizedDir);
+
+        if (!dirInfo.Exists)
+        {
+            throw new DirectoryNotFoundException($"Directory not found: {normalizedDir}");
+        }
+
+        // Find all C# files
+        var csFiles = dirInfo.GetFiles("*.cs", SearchOption.AllDirectories)
+            .Where(f => !IsExcluded(f.FullName))
+            .ToList();
+
+        foreach (var file in csFiles)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            try
+            {
+                var code = await File.ReadAllTextAsync(file.FullName, cancellationToken);
+                var tree = CSharpSyntaxTree.ParseText(code, cancellationToken: cancellationToken);
+                var root = await tree.GetRootAsync(cancellationToken);
+
+                // Find all classes
+                var classDeclarations = root.DescendantNodes()
+                    .OfType<ClassDeclarationSyntax>();
+
+                foreach (var classDecl in classDeclarations)
+                {
+                    var classAnalysis = AnalyzeClass(classDecl, file.FullName, code);
+                    classes.Add(classAnalysis);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "Error analyzing file: {Path}", file.FullName);
+            }
+        }
+
+        // Analyze EF Core contexts in detail
+        var efContexts = await AnalyzeEntityFrameworkContextAsync(directory, cancellationToken);
+        var dbRelatedCount = classes.Count(c => c.IsDbRelated);
+
+        _logger.LogInformation(
+            "Analyzed {Total} classes ({DbRelated} database-related), {EF} EF contexts",
+            classes.Count, dbRelatedCount, efContexts.Count);
+
+        return new CodeAnalysisResult
+        {
+            Directory = normalizedDir,
+            Classes = classes,
+            TotalClasses = classes.Count,
+            DbRelatedClasses = dbRelatedCount,
+            EfContexts = efContexts.Count > 0 ? efContexts : null
+        };
+    }
+
     public async Task<List<EntityFrameworkContext>> AnalyzeEntityFrameworkContextAsync(
         string directory = ".",
         CancellationToken cancellationToken = default)
@@ -216,6 +282,217 @@ public sealed class CodeContextService : ICodeContextService
 
         _logger.LogInformation("Found {Count} DbContext classes", contexts.Count);
         return contexts;
+    }
+
+    private ClassAnalysis AnalyzeClass(ClassDeclarationSyntax classDecl, string filePath, string sourceCode)
+    {
+        var className = classDecl.Identifier.Text;
+        var namespaceName = GetNamespace(classDecl);
+        var baseTypes = GetBaseTypes(classDecl);
+        var properties = GetPropertySummaries(classDecl);
+        var methods = GetMethodSummaries(classDecl);
+        var attributes = GetAttributes(classDecl.AttributeLists).Select(a => a.ToString()).ToList();
+
+        // Determine if class is database-related and what technology
+        var isDbRelated = false;
+        string? dbTechnology = null;
+        DapperUsage? dapperDetails = null;
+        AdoNetUsage? adoNetDetails = null;
+
+        if (baseTypes.Any(bt => bt.Contains("DbContext")))
+        {
+            isDbRelated = true;
+            dbTechnology = "EF Core";
+        }
+        else
+        {
+            dapperDetails = DetectDapperUsage(sourceCode);
+            if (dapperDetails != null)
+            {
+                isDbRelated = true;
+                dbTechnology = "Dapper";
+            }
+            else
+            {
+                adoNetDetails = DetectAdoNetUsage(sourceCode);
+                if (adoNetDetails != null)
+                {
+                    isDbRelated = true;
+                    dbTechnology = "ADO.NET";
+                }
+            }
+        }
+
+        return new ClassAnalysis
+        {
+            Name = className,
+            Namespace = namespaceName,
+            FilePath = filePath,
+            BaseTypes = baseTypes,
+            Properties = properties,
+            Methods = methods,
+            Attributes = attributes,
+            IsDbRelated = isDbRelated,
+            DbTechnology = dbTechnology,
+            DapperDetails = dapperDetails,
+            AdoNetDetails = adoNetDetails
+        };
+    }
+
+    private DapperUsage? DetectDapperUsage(string sourceCode)
+    {
+        var hasDapperUsing = sourceCode.Contains("using Dapper;");
+        var queryMethods = new List<string>();
+        var sqlSnippets = new List<string>();
+
+        // Detect Dapper query methods
+        var dapperPatterns = new[] {
+            ".Query<",
+            ".QueryAsync<",
+            ".Execute(",
+            ".ExecuteAsync(",
+            ".QueryFirst",
+            ".QuerySingle",
+            ".QueryMultiple",
+            "SqlMapper."
+        };
+
+        foreach (var pattern in dapperPatterns)
+        {
+            if (sourceCode.Contains(pattern))
+            {
+                queryMethods.Add(pattern.TrimStart('.').TrimEnd('('));
+            }
+        }
+
+        // Extract SQL snippets (simplified - looks for string literals that look like SQL)
+        var sqlRegex = new Regex(@"""(SELECT|INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\s+[^""]{10,}""", RegexOptions.IgnoreCase);
+        var sqlMatches = sqlRegex.Matches(sourceCode);
+        foreach (Match match in sqlMatches)
+        {
+            var sql = match.Value.Substring(1, Math.Min(100, match.Value.Length - 2)); // First 100 chars
+            if (sql.Length < match.Value.Length - 2) sql += "...";
+            sqlSnippets.Add(sql);
+        }
+
+        if (hasDapperUsing || queryMethods.Any())
+        {
+            return new DapperUsage
+            {
+                HasDapperUsing = hasDapperUsing,
+                QueryMethods = queryMethods,
+                SqlSnippets = sqlSnippets.Take(5).ToList() // Limit to 5 snippets
+            };
+        }
+
+        return null;
+    }
+
+    private AdoNetUsage? DetectAdoNetUsage(string sourceCode)
+    {
+        var hasAdoNetUsing = sourceCode.Contains("using System.Data.SqlClient;") ||
+                             sourceCode.Contains("using Microsoft.Data.SqlClient;") ||
+                             sourceCode.Contains("using System.Data.Common;");
+
+        var connectionTypes = new List<string>();
+        var commandTypes = new List<string>();
+        var executeMethods = new List<string>();
+
+        // Detect ADO.NET types
+        var adoNetTypes = new[] {
+            "SqlConnection",
+            "SqlCommand",
+            "SqlDataReader",
+            "DbConnection",
+            "DbCommand",
+            "DbDataReader"
+        };
+
+        foreach (var type in adoNetTypes)
+        {
+            if (sourceCode.Contains(type))
+            {
+                if (type.Contains("Connection"))
+                    connectionTypes.Add(type);
+                else if (type.Contains("Command"))
+                    commandTypes.Add(type);
+            }
+        }
+
+        // Detect execute methods
+        var executePatterns = new[] {
+            ".ExecuteReader(",
+            ".ExecuteNonQuery(",
+            ".ExecuteScalar(",
+            "new SqlCommand(",
+            "new SqlConnection("
+        };
+
+        foreach (var pattern in executePatterns)
+        {
+            if (sourceCode.Contains(pattern))
+            {
+                executeMethods.Add(pattern.TrimStart('.').TrimEnd('(').Replace("new ", ""));
+            }
+        }
+
+        if (hasAdoNetUsing || connectionTypes.Any() || commandTypes.Any() || executeMethods.Any())
+        {
+            return new AdoNetUsage
+            {
+                HasAdoNetUsing = hasAdoNetUsing,
+                ConnectionTypes = connectionTypes.Distinct().ToList(),
+                CommandTypes = commandTypes.Distinct().ToList(),
+                ExecuteMethods = executeMethods.Distinct().ToList()
+            };
+        }
+
+        return null;
+    }
+
+    private string GetNamespace(ClassDeclarationSyntax classDecl)
+    {
+        var namespaceDecl = classDecl.Ancestors().OfType<NamespaceDeclarationSyntax>().FirstOrDefault();
+        if (namespaceDecl != null)
+            return namespaceDecl.Name.ToString();
+
+        var fileScopedNs = classDecl.Ancestors().OfType<FileScopedNamespaceDeclarationSyntax>().FirstOrDefault();
+        return fileScopedNs?.Name.ToString() ?? "Global";
+    }
+
+    private List<string> GetBaseTypes(ClassDeclarationSyntax classDecl)
+    {
+        if (classDecl.BaseList == null)
+            return new List<string>();
+
+        return classDecl.BaseList.Types.Select(t => t.ToString()).ToList();
+    }
+
+    private List<PropertySummary> GetPropertySummaries(ClassDeclarationSyntax classDecl)
+    {
+        return classDecl.Members
+            .OfType<PropertyDeclarationSyntax>()
+            .Select(p => new PropertySummary
+            {
+                Name = p.Identifier.Text,
+                Type = p.Type.ToString(),
+                Attributes = GetAttributes(p.AttributeLists).Select(a => a.ToString()).ToList()
+            })
+            .ToList();
+    }
+
+    private List<MethodSummary> GetMethodSummaries(ClassDeclarationSyntax classDecl)
+    {
+        return classDecl.Members
+            .OfType<MethodDeclarationSyntax>()
+            .Select(m => new MethodSummary
+            {
+                Name = m.Identifier.Text,
+                ReturnType = m.ReturnType.ToString(),
+                Parameters = m.ParameterList.Parameters.Select(p => $"{p.Type} {p.Identifier}").ToList(),
+                Attributes = GetAttributes(m.AttributeLists).Select(a => a.ToString()).ToList()
+            })
+            .ToList();
     }
 
     private async Task<EntityFrameworkContext?> AnalyzeDbContextClassAsync(

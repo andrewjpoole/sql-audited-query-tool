@@ -355,3 +355,47 @@ Added SqlScriptRunner section with ReposBaseDirectory and Repositories dictionar
 **Build status:** ✅ All projects build successfully, 0 errors
 
 **Next steps:** Frontend implementation (Legolas) will create WriteQuerySimulator.tsx component that consumes these endpoints.
+
+### 2026-03-03T11:54:38Z: Code Analysis Models Extension — Broadened Beyond EF Core
+**Purpose:** Extended code context models and interface to support comprehensive code analysis across entire repositories, not just EF Core contexts.
+**Changes:**
+1. **New models in Core/Models/Llm/CodeContextModels.cs:**
+   - CodeAnalysisResult — top-level result containing:
+     - List<ClassAnalysis> Classes — all classes found
+     - List<EntityFrameworkContext> EntityFrameworkContexts — EF contexts (reused existing model)
+     - List<DapperUsage> DapperUsages — Dapper query patterns found
+     - List<AdoNetUsage> AdoNetUsages — ADO.NET patterns found
+     - string Directory — analyzed directory
+     - int TotalFilesAnalyzed — file count
+   - ClassAnalysis — general class information:
+     - Name, Namespace, FilePath
+     - List<string> BaseTypes — inheritance/interfaces
+     - List<PropertySummary> Properties — lighter-weight than PropertyDefinition
+     - List<MethodSummary> Methods — method signatures
+     - List<string> Attributes — class-level attributes
+     - ool IsDbRelated, string? DbTechnology — flags for DB-related classes
+   - PropertySummary — simpler than PropertyDefinition (no EF-specific fields like IsKey, ColumnName)
+   - MethodSummary — Name, ReturnType, List<string> Parameters, List<string> Attributes
+   - DapperUsage — detailed usage tracking: FilePath, ClassName, MethodName, LineNumber, QueryType, SqlSnippet
+   - AdoNetUsage — detailed usage tracking: FilePath, ClassName, MethodName, LineNumber, Pattern, SqlSnippet
+2. **New interface method in Core/Interfaces/Llm/ICodeContextService.cs:**
+   - Task<CodeAnalysisResult> AnalyzeCodeAsync(string directory = ".", CancellationToken cancellationToken = default);
+   - Existing AnalyzeEntityFrameworkContextAsync method retained — will be called internally by the new method
+**Design principles:**
+- **Backward compatibility:** ALL existing models (EntityFrameworkContext, EntityDefinition, PropertyDefinition, NavigationProperty, FileContent, FileListResult, CodeSearchResult) remain untouched
+- **Composition over modification:** New analysis builds on top of existing EF analysis rather than replacing it
+- **Model hierarchy:** PropertySummary for general classes (lightweight), PropertyDefinition for EF entities (detailed with DB metadata)
+- **Detailed tracking:** DapperUsage and AdoNetUsage track individual method usages with line numbers and SQL snippets for audit trail compatibility
+**Implementation context:**
+- The implementation in SqlAuditedQueryTool.Llm\Services\CodeContextService.cs already existed with the AnalyzeCodeAsync method
+- The implementation calls ExtractDatabaseUsagePatterns which expects the detailed DapperUsage/AdoNetUsage models with FilePath, ClassName, MethodName, LineNumber properties
+- The models were updated to match the existing implementation structure
+**Key lesson:** When extending models for code analysis, there are two distinct levels:
+1. **General class analysis** (ClassAnalysis) — needs lightweight summaries (PropertySummary, MethodSummary)  
+2. **EF entity analysis** (EntityDefinition) — needs detailed metadata (PropertyDefinition with IsKey, ColumnName, etc.)
+Don't force EF-specific metadata onto general classes — use separate, appropriate models for each layer.
+**Files modified:**
+- src\SqlAuditedQueryTool.Core\Models\Llm\CodeContextModels.cs — added 7 new model classes
+- src\SqlAuditedQueryTool.Core\Interfaces\Llm\ICodeContextService.cs — added 1 new method
+**Next steps:** Radagast can now use AnalyzeCodeAsync to get comprehensive repository analysis including EF contexts, Dapper usage, and ADO.NET patterns with full audit trail support.
+

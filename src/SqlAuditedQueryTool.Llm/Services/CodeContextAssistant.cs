@@ -38,7 +38,7 @@ public sealed class CodeContextAssistant
     {
         systemPrompt ??= 
             "You are a helpful code analysis assistant. You have access to tools that let you " +
-            "read files, list files, search code, and analyze Entity Framework DbContext classes. " +
+            "read files, list files, search code, and analyze application code with special attention to database patterns (EF Core, Dapper, ADO.NET). " +
             "Use these tools to answer questions about the codebase.";
 
         var messages = new List<AIChatMessage>
@@ -74,7 +74,7 @@ public sealed class CodeContextAssistant
     {
         systemPrompt ??= 
             "You are a helpful code analysis assistant. You have access to tools that let you " +
-            "read files, list files, search code, and analyze Entity Framework DbContext classes. " +
+            "read files, list files, search code, and analyze application code with special attention to database patterns (EF Core, Dapper, ADO.NET). " +
             "Use these tools to answer questions about the codebase.";
 
         var messages = new List<AIChatMessage>
@@ -108,7 +108,7 @@ public sealed class CodeContextAssistant
             AIFunctionFactory.Create(ReadFileAsync, "ReadFile"),
             AIFunctionFactory.Create(ListFilesAsync, "ListFiles"),
             AIFunctionFactory.Create(SearchCodeAsync, "SearchCode"),
-            AIFunctionFactory.Create(AnalyzeEntityFrameworkContextAsync, "AnalyzeEntityFrameworkContext"),
+            AIFunctionFactory.Create(AnalyzeCodeAsync, "AnalyzeCode"),
             AIFunctionFactory.Create(AddContextDirectoryAsync, "AddContextDirectory"),
             AIFunctionFactory.Create(RemoveContextDirectoryAsync, "RemoveContextDirectory"),
             AIFunctionFactory.Create(ListContextDirectoriesAsync, "ListContextDirectories")
@@ -221,57 +221,21 @@ public sealed class CodeContextAssistant
         }
     }
 
-    [Description("Analyze Entity Framework DbContext classes and extract entity definitions, properties, and relationships")]
-    private async Task<string> AnalyzeEntityFrameworkContextAsync(
-        [Description("The directory to search for DbContext classes (default: current directory)")] string directory = ".",
+    [Description("Analyze application code in a directory. Extracts class definitions, methods, properties, and specially detects database-related patterns including Entity Framework DbContext classes, Dapper queries, and ADO.NET usage.")]
+    private async Task<string> AnalyzeCodeAsync(
+        [Description("The directory to analyze (default: current directory)")] string directory = ".",
         CancellationToken cancellationToken = default)
     {
         try
         {
-            _logger.LogInformation("LLM requested Entity Framework analysis in directory: {Directory}", directory);
-            var contexts = await _codeContext.AnalyzeEntityFrameworkContextAsync(directory, cancellationToken);
+            _logger.LogInformation("LLM requested code analysis in directory: {Directory}", directory);
+            var result = await _codeContext.AnalyzeCodeAsync(directory, cancellationToken);
             
-            return JsonSerializer.Serialize(new
-            {
-                success = true,
-                contextsFound = contexts.Count,
-                contexts = contexts.Select(ctx => new
-                {
-                    contextName = ctx.ContextName,
-                    filePath = ctx.FilePath,
-                    entities = ctx.Entities.Select(e => new
-                    {
-                        name = e.Name,
-                        tableName = e.TableName,
-                        schemaName = e.SchemaName,
-                        properties = e.Properties.Select(p => new
-                        {
-                            name = p.Name,
-                            type = p.Type,
-                            isNullable = p.IsNullable,
-                            isKey = p.IsKey,
-                            isRequired = p.IsRequired,
-                            maxLength = p.MaxLength,
-                            columnName = p.ColumnName,
-                            dataAnnotations = p.DataAnnotations
-                        }),
-                        navigationProperties = e.NavigationProperties.Select(n => new
-                        {
-                            name = n.Name,
-                            targetEntity = n.TargetEntity,
-                            relationType = n.RelationType,
-                            foreignKey = n.ForeignKey,
-                            inverseProperty = n.InverseProperty
-                        }),
-                        indexes = e.Indexes,
-                        configurations = e.Configurations
-                    })
-                })
-            }, new JsonSerializerOptions { WriteIndented = true });
+            return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error analyzing Entity Framework contexts in: {Directory}", directory);
+            _logger.LogError(ex, "Error analyzing code in: {Directory}", directory);
             return JsonSerializer.Serialize(new
             {
                 success = false,

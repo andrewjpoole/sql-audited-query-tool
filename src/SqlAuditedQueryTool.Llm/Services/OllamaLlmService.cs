@@ -1,5 +1,7 @@
 using System.Runtime.CompilerServices;
+using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Logging;
 using Microsoft.Extensions.Options;
@@ -19,13 +21,17 @@ namespace SqlAuditedQueryTool.Llm.Services;
 
 public sealed class OllamaLlmService : ILlmService
 {
+    private static readonly Regex ThinkingContentRegex = new(
+        @"<think>.*?</think>\s*",
+        RegexOptions.Singleline | RegexOptions.Compiled);
+
     internal const string DefaultSystemPrompt =
         "You are a SQL Server query assistant for incident investigation. " +
         "You help investigate incidents by executing queries and analyzing results. " +
         "Use the execute_sql_query tool to run SELECT queries when needed. " +
         "After seeing results, provide analysis and suggest follow-up queries if helpful. " +
-        "\n\nYou also have access to code context tools to read and analyze Entity Framework code repositories. " +
-        "Use ReadFile, ListFiles, SearchCode, and AnalyzeEntityFrameworkContext to understand database structure from code. " +
+        "\n\nYou also have access to code context tools to read and analyze application code repositories. " +
+        "Use ReadFile, ListFiles, SearchCode, and AnalyzeCode to understand database structure and patterns from code (EF Core, Dapper, ADO.NET). " +
         "Use AddContextDirectory to add new directories to the allowed list for this session.";
 
     private readonly IChatClient _client;
@@ -82,7 +88,8 @@ public sealed class OllamaLlmService : ILlmService
             ? ExtractToolCallsFromOllama(finalResponse.Message) 
             : new List<ToolCallRequest>();
         
-        var text = finalResponse?.Message?.Content ?? string.Empty;
+        var rawText = finalResponse?.Message?.Content ?? string.Empty;
+        var text = StripThinkingContent(rawText);
 
         return new LlmResponse
         {
@@ -104,10 +111,16 @@ public sealed class OllamaLlmService : ILlmService
             Tools = BuildTools()
         };
 
+        var filter = new StreamingThinkingFilter();
         await foreach (var update in _client.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
         {
             if (update.Text is { Length: > 0 } content)
-                yield return content;
+            {
+                foreach (var filtered in filter.ProcessChunk(content))
+                {
+                    yield return filtered;
+                }
+            }
         }
     }
 
@@ -238,7 +251,7 @@ public sealed class OllamaLlmService : ILlmService
             tools.Add(AIFunctionFactory.Create(ReadFileAsync, "ReadFile"));
             tools.Add(AIFunctionFactory.Create(ListFilesAsync, "ListFiles"));
             tools.Add(AIFunctionFactory.Create(SearchCodeAsync, "SearchCode"));
-            tools.Add(AIFunctionFactory.Create(AnalyzeEntityFrameworkContextAsync, "AnalyzeEntityFrameworkContext"));
+            tools.Add(AIFunctionFactory.Create(AnalyzeCodeAsync, "AnalyzeCode"));
             tools.Add(AIFunctionFactory.Create(AddContextDirectoryAsync, "AddContextDirectory"));
             tools.Add(AIFunctionFactory.Create(RemoveContextDirectoryAsync, "RemoveContextDirectory"));
             tools.Add(AIFunctionFactory.Create(ListContextDirectoriesAsync, "ListContextDirectories"));
@@ -334,8 +347,8 @@ public sealed class OllamaLlmService : ILlmService
                 type = "function",
                 function = new
                 {
-                    name = "AnalyzeEntityFrameworkContext",
-                    description = "Analyze Entity Framework DbContext classes and extract entity definitions",
+                    name = "AnalyzeCode",
+                    description = "Analyze application code in a directory. Extracts class definitions, methods, properties, and specially detects database-related patterns including Entity Framework DbContext classes, Dapper queries, and ADO.NET usage.",
                     parameters = new
                     {
                         type = "object",
@@ -344,7 +357,7 @@ public sealed class OllamaLlmService : ILlmService
                             ["directory"] = new
                             {
                                 type = "string",
-                                description = "The directory to search for DbContext classes"
+                                description = "The directory to analyze for code patterns"
                             }
                         },
                         required = Array.Empty<string>()
@@ -512,52 +525,23 @@ public sealed class OllamaLlmService : ILlmService
         }
     }
 
-    [System.ComponentModel.Description("Analyze Entity Framework DbContext classes and extract entity definitions")]
-    private async Task<string> AnalyzeEntityFrameworkContextAsync(
-        [System.ComponentModel.Description("The directory to search for DbContext classes")] string directory = ".",
+    [System.ComponentModel.Description("Analyze application code in a directory. Extracts class definitions, methods, properties, and specially detects database-related patterns including Entity Framework DbContext classes, Dapper queries, and ADO.NET usage.")]
+    private async Task<string> AnalyzeCodeAsync(
+        [System.ComponentModel.Description("The directory to analyze (default: current directory)")] string directory = ".",
         CancellationToken cancellationToken = default)
     {
         if (_codeContextService == null) return JsonSerializer.Serialize(new { success = false, error = "Code context service not available" });
         
         try
         {
-            _logger.LogInformation("LLM requested Entity Framework analysis in directory: {Directory}", directory);
-            var contexts = await _codeContextService.AnalyzeEntityFrameworkContextAsync(directory, cancellationToken);
+            _logger.LogInformation("LLM requested code analysis in directory: {Directory}", directory);
+            var result = await _codeContextService.AnalyzeCodeAsync(directory, cancellationToken);
             
-            return JsonSerializer.Serialize(new
-            {
-                success = true,
-                contextsFound = contexts.Count,
-                contexts = contexts.Select(ctx => new
-                {
-                    contextName = ctx.ContextName,
-                    filePath = ctx.FilePath,
-                    entities = ctx.Entities.Select(e => new
-                    {
-                        name = e.Name,
-                        tableName = e.TableName,
-                        schemaName = e.SchemaName,
-                        properties = e.Properties.Select(p => new
-                        {
-                            name = p.Name,
-                            type = p.Type,
-                            isNullable = p.IsNullable,
-                            isKey = p.IsKey,
-                            columnName = p.ColumnName
-                        }),
-                        navigationProperties = e.NavigationProperties.Select(n => new
-                        {
-                            name = n.Name,
-                            targetEntity = n.TargetEntity,
-                            relationType = n.RelationType
-                        })
-                    })
-                })
-            }, new JsonSerializerOptions { WriteIndented = true });
+            return JsonSerializer.Serialize(result, new JsonSerializerOptions { WriteIndented = true });
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Error analyzing Entity Framework contexts in: {Directory}", directory);
+            _logger.LogError(ex, "Error analyzing code in: {Directory}", directory);
             return JsonSerializer.Serialize(new { success = false, error = ex.Message });
         }
     }
@@ -746,9 +730,9 @@ public sealed class OllamaLlmService : ILlmService
                     var searchDir = toolCall.Arguments.TryGetValue("directory", out var sdObj) && sdObj is string sd ? sd : ".";
                     return await SearchCodeAsync(searchPattern, searchDir, cancellationToken);
                 
-                case "AnalyzeEntityFrameworkContext":
+                case "AnalyzeCode":
                     var analysisDir = toolCall.Arguments.TryGetValue("directory", out var adObj) && adObj is string ad ? ad : ".";
-                    return await AnalyzeEntityFrameworkContextAsync(analysisDir, cancellationToken);
+                    return await AnalyzeCodeAsync(analysisDir, cancellationToken);
                 
                 case "AddContextDirectory":
                     if (!toolCall.Arguments.TryGetValue("directory", out var addDirObj) || addDirObj is not string addDir)
@@ -838,6 +822,121 @@ public sealed class OllamaLlmService : ILlmService
         }
 
         return sb.ToString();
+    }
+
+    /// <summary>
+    /// Strips <think>...</think> blocks from qwen3.5 responses (thinking mode content).
+    /// qwen3.5 uses these tags to show reasoning, but we want clean output for users.
+    /// </summary>
+    private static string StripThinkingContent(string text)
+    {
+        if (string.IsNullOrEmpty(text))
+            return text;
+
+        var result = ThinkingContentRegex.Replace(text, string.Empty);
+        return result.Trim();
+    }
+
+    /// <summary>
+    /// Stateful filter for removing <think>...</think> blocks from streaming responses.
+    /// Handles cases where thinking tags span multiple chunks.
+    /// </summary>
+    private sealed class StreamingThinkingFilter
+    {
+        private readonly StringBuilder _buffer = new();
+        private bool _insideThinking;
+
+        public IEnumerable<string> ProcessChunk(string chunk)
+        {
+            _buffer.Append(chunk);
+
+            while (_buffer.Length > 0)
+            {
+                if (!_insideThinking)
+                {
+                    var thinkIndex = _buffer.ToString().IndexOf("<think>", StringComparison.Ordinal);
+                    
+                    if (thinkIndex >= 0)
+                    {
+                        // Yield everything before <think>
+                        if (thinkIndex > 0)
+                        {
+                            var output = _buffer.ToString(0, thinkIndex);
+                            yield return output;
+                        }
+                        
+                        // Remove everything up to and including <think>
+                        _buffer.Remove(0, thinkIndex + 7); // 7 = "<think>".Length
+                        _insideThinking = true;
+                    }
+                    else if (CouldStartThinkingTag(_buffer.ToString()))
+                    {
+                        // Buffer ends with partial "<think>" - wait for more chunks
+                        yield break;
+                    }
+                    else
+                    {
+                        // No thinking tag found, yield everything
+                        var output = _buffer.ToString();
+                        _buffer.Clear();
+                        yield return output;
+                        yield break;
+                    }
+                }
+                else // _insideThinking
+                {
+                    var endIndex = _buffer.ToString().IndexOf("</think>", StringComparison.Ordinal);
+                    
+                    if (endIndex >= 0)
+                    {
+                        // Remove thinking content and closing tag
+                        _buffer.Remove(0, endIndex + 8); // 8 = "</think>".Length
+                        
+                        // Remove trailing whitespace after </think>
+                        while (_buffer.Length > 0 && char.IsWhiteSpace(_buffer[0]))
+                        {
+                            _buffer.Remove(0, 1);
+                        }
+                        
+                        _insideThinking = false;
+                    }
+                    else if (CouldStartEndThinkingTag(_buffer.ToString()))
+                    {
+                        // Buffer ends with partial "</think>" - wait for more
+                        yield break;
+                    }
+                    else
+                    {
+                        // Inside thinking block, discard content and wait for closing tag
+                        _buffer.Clear();
+                        yield break;
+                    }
+                }
+            }
+        }
+
+        private static bool CouldStartThinkingTag(string text)
+        {
+            // Check if buffer ends with a partial "<think>" tag
+            return text.EndsWith("<") ||
+                   text.EndsWith("<t") ||
+                   text.EndsWith("<th") ||
+                   text.EndsWith("<thi") ||
+                   text.EndsWith("<thin") ||
+                   text.EndsWith("<think");
+        }
+
+        private static bool CouldStartEndThinkingTag(string text)
+        {
+            // Check if buffer ends with a partial "</think>" tag
+            return text.EndsWith("<") ||
+                   text.EndsWith("</") ||
+                   text.EndsWith("</t") ||
+                   text.EndsWith("</th") ||
+                   text.EndsWith("</thi") ||
+                   text.EndsWith("</thin") ||
+                   text.EndsWith("</think");
+        }
     }
 
 }

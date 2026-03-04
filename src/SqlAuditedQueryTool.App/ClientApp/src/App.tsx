@@ -5,6 +5,7 @@ import QueryResults from './components/QueryResults';
 import ChatPanel from './components/ChatPanel';
 import QueryHistory from './components/QueryHistory';
 import SchemaTreeView from './components/SchemaTreeView';
+import WriteScriptSimulator from './components/WriteScriptSimulator';
 import { executeQuery } from './api/queryApi';
 import type { QueryResult, ChatMessage } from './api/queryApi';
 import type { HistoryEntry } from './components/QueryHistory';
@@ -14,6 +15,7 @@ import './App.css';
 
 export default function App() {
   const [sql, setSql] = useState('');
+  const [appMode, setAppMode] = useState<'query' | 'simulator'>('query');
 
   // Query results state - now stored per tab
   const [tabResults, setTabResults] = useState<Record<string, QueryResult | null>>({});
@@ -265,53 +267,79 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <h1>SQL Audited Query Tool</h1>
-        <span className="app-header-badge">Read-Only</span>
+        <span className={`app-header-badge ${appMode === 'simulator' ? 'app-header-badge--simulator' : ''}`}>
+          {appMode === 'query' ? 'Read-Only' : '⚠️ Simulation'}
+        </span>
+        <div className="app-mode-toggle">
+          <button 
+            className={`mode-btn ${appMode === 'query' ? 'mode-btn--active' : ''}`}
+            onClick={() => setAppMode('query')}
+          >
+            Query
+          </button>
+          <button 
+            className={`mode-btn ${appMode === 'simulator' ? 'mode-btn--active mode-btn--simulator' : ''}`}
+            onClick={() => setAppMode('simulator')}
+          >
+            ⚠️ Write Simulator
+          </button>
+        </div>
       </header>
 
       <div className="main-area">
-        <SchemaTreeView onInsertText={handleInsertText} />
+        <SchemaTreeView onInsertText={appMode === 'query' ? handleInsertText : () => {}} />
 
-        <QueryHistory entries={history} onSelect={handleHistorySelect} />
+        {appMode === 'query' && (
+          <QueryHistory entries={history} onSelect={handleHistorySelect} />
+        )}
 
         <div className="center-area">
-          <div className="editor-panel" style={{ height: `${editorHeight}px` }}>
-            <TabbedSqlEditor 
-              ref={editorRef} 
-              value={sql} 
-              onChange={setSql} 
-              onExecute={handleExecute}
-              onExecuteSelection={handleExecuteSelection}
-              onActiveTabChange={handleActiveTabChange}
-              onShowPlanChange={handleExecutionPlanModeChange}
-            />
-          </div>
+          {appMode === 'query' ? (
+            <>
+              <div className="editor-panel" style={{ height: `${editorHeight}px` }}>
+                <TabbedSqlEditor 
+                  ref={editorRef} 
+                  value={sql} 
+                  onChange={setSql} 
+                  onExecute={handleExecute}
+                  onExecuteSelection={handleExecuteSelection}
+                  onActiveTabChange={handleActiveTabChange}
+                  onShowPlanChange={handleExecutionPlanModeChange}
+                />
+              </div>
 
-          <div className="resize-handle" onMouseDown={handleEditorResize}>
-            <div className="resize-handle-bar" />
-          </div>
+              <div className="resize-handle" onMouseDown={handleEditorResize}>
+                <div className="resize-handle-bar" />
+              </div>
 
-          <div className="results-panel">
-            <QueryResults
-              result={queryResult}
-              loading={queryLoading}
-              error={queryError}
-              collapsed={resultsCollapsed}
-              onToggleCollapse={() => setResultsCollapsed((v) => !v)}
-            />
-          </div>
+              <div className="results-panel">
+                <QueryResults
+                  result={queryResult}
+                  loading={queryLoading}
+                  error={queryError}
+                  collapsed={resultsCollapsed}
+                  onToggleCollapse={() => setResultsCollapsed((v) => !v)}
+                />
+              </div>
+            </>
+          ) : (
+            <WriteScriptSimulator editorHeight={editorHeight} onEditorResize={handleEditorResize} />
+          )}
         </div>
 
-        <ChatPanel
-          onInsertSql={handleInsertSql}
-          onInsertAndExecute={handleInsertAndExecute}
-          onAiExecutedQuery={handleAiExecutedQuery}
-          sessions={sessions}
-          currentSessionId={currentSessionId}
-          onNewSession={handleNewChatSession}
-          onLoadSession={handleLoadChatSession}
-          onDeleteSession={handleDeleteChatSession}
-          onUpdateSession={handleUpdateChatSession}
-        />
+        {appMode === 'query' && (
+          <ChatPanel
+            onInsertSql={handleInsertSql}
+            onInsertAndExecute={handleInsertAndExecute}
+            onAiExecutedQuery={handleAiExecutedQuery}
+            sessions={sessions}
+            currentSessionId={currentSessionId}
+            onNewSession={handleNewChatSession}
+            onLoadSession={handleLoadChatSession}
+            onDeleteSession={handleDeleteChatSession}
+            onUpdateSession={handleUpdateChatSession}
+          />
+        )}
       </div>
     </div>
   );

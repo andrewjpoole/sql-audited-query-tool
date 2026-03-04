@@ -86,6 +86,41 @@ export interface ApiError {
   detail?: string;
 }
 
+export interface SimulationResult {
+  isValid: boolean;
+  validationErrors: string[];
+  warnings: string[];
+  estimatedAffectedRows: number | null;
+  executionPlanXml: string | null;
+  executionMilliseconds: number;
+  succeeded: boolean;
+  errorMessage: string | null;
+}
+
+export interface ScriptRepository {
+  key: string;
+  name: string;
+  path: string;
+}
+
+export interface ScriptGenerationRequest {
+  sql: string;
+  repositoryKey: string;
+  workItemId: number;
+  purpose: string;
+  expectedAffectedRows: number;
+  databaseName: string | null;
+}
+
+export interface ScriptGenerationResult {
+  succeeded: boolean;
+  errorMessage: string | null;
+  querySqlContent: string | null;
+  updateSqlContent: string | null;
+  outputDirectory: string | null;
+  filesCreated: boolean;
+}
+
 async function handleResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     let errorMsg = `Request failed (${response.status})`;
@@ -156,4 +191,27 @@ export async function chat(
 export async function getSchema(): Promise<SchemaContext> {
   const response = await fetch('/api/schema');
   return handleResponse<SchemaContext>(response);
+}
+
+export async function simulateQuery(sql: string): Promise<SimulationResult> {
+  const response = await fetch('/api/simulation/execute', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ sql }),
+  });
+  return handleResponse<SimulationResult>(response);
+}
+
+export async function getSimulationRepositories(): Promise<ScriptRepository[]> {
+  const response = await fetch('/api/simulation/repositories');
+  return handleResponse<ScriptRepository[]>(response);
+}
+
+export async function generateScripts(request: ScriptGenerationRequest): Promise<ScriptGenerationResult> {
+  const response = await fetch('/api/simulation/generate-scripts', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(request),
+  });
+  return handleResponse<ScriptGenerationResult>(response);
 }

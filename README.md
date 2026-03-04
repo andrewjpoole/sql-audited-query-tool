@@ -98,6 +98,8 @@ Ask the chat these questions to explore the sample data and test the query tool:
 
 5. **Data Integrity**: "Identify deposits where the settled date is before the processed date, or where fee amounts are zero for cash transactions. These indicate data corruption or automation failures."
 
+6. **Complex Cross-Reference** *(great for execution plans)*: "For each partner, show me the total deposit volume and count broken down by account status and location, but only include partners where at least one of their accounts has received deposits from more than 3 different locations. Rank the partners by total volume descending."
+
 ## GPU Setup (NVIDIA + Docker + WSL2)
 
 The local LLM (Ollama with `qwen2.5-coder:7b`) runs significantly faster with GPU acceleration. This requires NVIDIA GPU passthrough from Windows → WSL2 → Docker.

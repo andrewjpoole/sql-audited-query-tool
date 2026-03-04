@@ -99,3 +99,75 @@ public sealed class CodeSearchResult
         public required string Context { get; init; } // Surrounding lines
     }
 }
+
+/// <summary>
+/// Result of general code analysis.
+/// </summary>
+public sealed class CodeAnalysisResult
+{
+    public required string Directory { get; init; }
+    public required List<ClassAnalysis> Classes { get; init; }
+    public required int TotalClasses { get; init; }
+    public required int DbRelatedClasses { get; init; }
+    public List<EntityFrameworkContext>? EfContexts { get; init; }
+}
+
+/// <summary>
+/// Analysis of a C# class.
+/// </summary>
+public sealed class ClassAnalysis
+{
+    public required string Name { get; init; }
+    public string? Namespace { get; init; }
+    public required string FilePath { get; init; }
+    public List<string> BaseTypes { get; init; } = new();
+    public List<PropertySummary> Properties { get; init; } = new();
+    public List<MethodSummary> Methods { get; init; } = new();
+    public List<string> Attributes { get; init; } = new();
+    public bool IsDbRelated { get; init; }
+    public string? DbTechnology { get; init; } // "EF Core", "Dapper", "ADO.NET"
+    public DapperUsage? DapperDetails { get; init; }
+    public AdoNetUsage? AdoNetDetails { get; init; }
+}
+
+/// <summary>
+/// Summary of a property.
+/// </summary>
+public sealed class PropertySummary
+{
+    public required string Name { get; init; }
+    public required string Type { get; init; }
+    public List<string> Attributes { get; init; } = new();
+}
+
+/// <summary>
+/// Summary of a method.
+/// </summary>
+public sealed class MethodSummary
+{
+    public required string Name { get; init; }
+    public required string ReturnType { get; init; }
+    public List<string> Parameters { get; init; } = new();
+    public List<string> Attributes { get; init; } = new();
+}
+
+/// <summary>
+/// Details of Dapper usage in a class.
+/// </summary>
+public sealed class DapperUsage
+{
+    public List<string> QueryMethods { get; init; } = new();
+    public List<string> SqlSnippets { get; init; } = new();
+    public bool HasDapperUsing { get; init; }
+}
+
+/// <summary>
+/// Details of ADO.NET usage in a class.
+/// </summary>
+public sealed class AdoNetUsage
+{
+    public List<string> ConnectionTypes { get; init; } = new();
+    public List<string> CommandTypes { get; init; } = new();
+    public List<string> ExecuteMethods { get; init; } = new();
+    public bool HasAdoNetUsing { get; init; }
+}

@@ -485,6 +485,59 @@
    - Creates or retrieves chat session
    - Saves user messages to history
    - **Tool calling loop**: detects tool calls, executes them, feeds results back to LLM
+
+### 2026-02-24: qwen3.5:27b Thinking Mode Fix
+
+**Context:** User upgraded from `qwen2.5:7b` to `qwen3.5:27b` (new Gated DeltaNet architecture model). Every chat request returned 500 Internal Server Error. The model was running in Ollama (v0.17.4) but the app couldn't handle its response format.
+
+**Root Cause:**
+- **qwen3.5 has thinking mode ON by default** — responses include `<think>\n...\n</think>\n\n` before actual content
+- The `OllamaLlmService.ChatAsync()` method extracted `finalResponse?.Message?.Content` directly without filtering
+- The `StreamChatAsync()` method also passed through raw tokens containing thinking content
+- Frontend and users should only see the final answer, not the internal reasoning
+
+**Solution:**
+1. Created `StripThinkingContent()` method to remove `<think>...</think>` blocks via regex:
+   - Pattern: `@"<think>.*?</think>\s*"` with `Singleline` flag (multiline content)
+   - Trims leading/trailing whitespace after removal
+   
+2. Updated `ChatAsync()` to filter the response:
+   ```csharp
+   var rawText = finalResponse?.Message?.Content ?? string.Empty;
+   var text = StripThinkingContent(rawText);
+   ```
+
+3. Updated `StreamChatAsync()` to filter streamed tokens:
+   ```csharp
+   var filtered = StripThinkingContent(content);
+   if (filtered.Length > 0)
+       yield return filtered;
+   ```
+
+**Files Changed:**
+- `src/SqlAuditedQueryTool.Llm/Services/OllamaLlmService.cs`:
+  - Line 85-86: Apply `StripThinkingContent()` to `ChatAsync()` response
+  - Line 112-115: Filter thinking content in `StreamChatAsync()`
+  - Line 849-867: New `StripThinkingContent()` method
+
+**Key Insights:**
+- **New LLM architectures may change response format** — always plan for content filtering/parsing
+- **qwen3.5's thinking mode is valuable** but should be opt-in for users, not shown by default
+- **Regex-based filtering works for thinking tags** since they're well-defined (`<think>...</think>`)
+- **Both streaming and non-streaming paths** need the same filtering logic
+- The fix maintains tool calling compatibility — thinking content appears before tool calls, so we still extract those correctly
+
+**Testing Notes:**
+- Build verified syntax is correct (file lock errors expected due to running app)
+- App needs restart to load the fixed DLL
+- After restart, qwen3.5:27b should respond normally without 500 errors
+- Users will see only the final answer, not internal reasoning
+
+**Prevention for Future Model Upgrades:**
+- Always check release notes for response format changes
+- Test both streaming and non-streaming modes with new models
+- Consider adding configurable "show reasoning" toggle for power users
+- Monitor for similar patterns in other models (e.g., `<reasoning>`, `<internal>`, etc.)
    - Executed queries are saved to `IQueryHistoryStore` with `Source=AI`
    - Queries are audited via `IAuditLogger` (GitHub issues)
    - Tool results and assistant responses saved to chat history
@@ -601,3 +654,120 @@
   - No impact to existing chat panel, query history, or schema tree view
 - **Security (FYI):** Three-layer defense verified. No changes to DataLeakPrevention or AuditIntegrity classes needed at this time.
 - **Next Phase:** LLM integration into simulator may be explored in Phase 2 (ask Andrew if write script suggestions are desired)
+
+## Learnings
+
+### 2026-02-28: Streaming Thinking Filter — Critical Bug Fix
+
+**The Bug:**
+- Previous fix for qwen3.5 thinking mode (`<think>...</think>`) worked in non-streaming path but **failed in streaming**
+- Root cause: Applied regex `<think>.*?</think>` per-chunk, but thinking blocks span multiple chunks
+- Example failure:
+  - Chunk 1: `<think>Let me analyze`
+  - Chunk 2: ` this step by step`
+  - Chunk 3: `</think>\n\nThe answer`
+  - No single chunk contains both tags → regex never matches → thinking content leaks to user
+
+**The Fix:**
+1. **Stateful streaming filter:** Replaced per-chunk regex with `StreamingThinkingFilter` class that:
+   - Maintains buffer and `_insideThinking` state across chunks
+   - Tracks partial tag boundaries (`<`, `<t`, `<th`, etc.) to avoid yielding incomplete tags
+   - Suppresses all content between `<think>` and `</think>`
+   - Only yields clean content outside thinking blocks
+2. **Static compiled regex:** Converted non-streaming regex to static field:
+   ```csharp
+   private static readonly Regex ThinkingContentRegex = new(
+       @"<think>.*?</think>\s*",
+       RegexOptions.Singleline | RegexOptions.Compiled);
+   ```
+   - Eliminates per-call regex compilation overhead
+   - Non-streaming path still uses regex (complete response, single match)
+
+**Key Insights:**
+- **Streaming filters need state:** Per-chunk processing breaks when patterns span chunks
+- **Buffer edge cases matter:** Must detect partial tags at chunk boundaries (`<thi` at end of chunk)
+- **Regex ≠ streaming:** Regex works for complete text, not incremental processing
+- **Performance:** Static compiled regex for hot paths, stateful parser for streaming
+
+**Files Modified:**
+- `OllamaLlmService.cs`: Added `StreamingThinkingFilter` class, updated `StreamChatAsync()`, made regex static
+
+### 2026-02-24: Model Downgrade from qwen3.5:27b to qwen3:14b for Memory Constraints
+
+**Context:** User's Docker/WSL environment is limited to ~16GB RAM, but qwen3.5:27b requires ~17GB. Need to downgrade to qwen3:14b (~8GB) to fit within memory constraints while maintaining tool calling and thinking mode capabilities.
+
+**Changes Made:**
+
+1. **Updated appsettings.json Model Configuration:**
+   - Changed `Llm.Model` from "qwen3.5:27b" to "qwen3:14b"
+   - Kept `ChatTimeoutSeconds` at 300 (appropriate for CPU inference with smaller model)
+
+2. **Updated Aspire AppHost Model Registration:**
+   - Changed `ollama.AddModel("ollamaModel", ...)` from "qwen3.5:27b" to "qwen3:14b"
+
+**No Code Changes Required:**
+- qwen3:14b supports tool calling and thinking mode like qwen3.5
+- `OllamaLlmService.cs` already has comprehensive <think> block filtering:
+  - `StripThinkingContent()` method with compiled regex removes <think>...</think> from non-streaming responses
+  - `StreamingThinkingFilter` class handles streaming responses with stateful parsing across chunks
+  - Both used in `ChatAsync()` and `StreamChatAsync()` respectively
+
+**Technical Details:**
+- qwen3.5:27b memory footprint: ~17GB (exceeds Docker/WSL limit)
+- qwen3:14b memory footprint: ~8GB (fits comfortably within 16GB)
+- Inference speed will be faster with smaller model on CPU
+- Both models use same <think>...</think> format for reasoning — no parsing changes needed
+
+**Files Modified:**
+- `src/SqlAuditedQueryTool.App/appsettings.json` — Model: "qwen3.5:27b" → "qwen3:14b"
+- `SqlAuditedQueryTool.AppHost/AppHost.cs` — AddModel(...): "qwen3.5:27b" → "qwen3:14b"
+
+**User Impact:**
+- Lower memory usage allows app to run in Docker/WSL without OOM
+- Faster inference on CPU (smaller model)
+- Maintains tool calling and thinking mode capabilities
+- No changes to API or user-facing behavior
+
+### 2026-02-24: Broadened Code Analysis Tool from EF-Only to All Database Patterns
+
+**Task:** Broaden the AnalyzeEntityFrameworkContext LLM tool to become a general AnalyzeCode tool that analyzes ALL application code with special attention to database-related patterns (EF Core, Dapper, ADO.NET).
+
+**Implementation:**
+
+1. **Models (CodeContextModels.cs):**
+   - Added CodeAnalysisResult: Directory, Classes list, TotalClasses, DbRelatedClasses, EfContexts
+   - Added ClassAnalysis: Name, Namespace, FilePath, BaseTypes, Properties, Methods, Attributes, IsDbRelated, DbTechnology, DapperDetails, AdoNetDetails
+   - Added PropertySummary and MethodSummary for lightweight class member tracking
+   - Added DapperUsage: QueryMethods list, SqlSnippets list, HasDapperUsing flag
+   - Added AdoNetUsage: ConnectionTypes, CommandTypes, ExecuteMethods, HasAdoNetUsing flag
+
+2. **Service Implementation (CodeContextService.cs):**
+   - Implemented AnalyzeCodeAsync: Parses ALL C# files, extracts class definitions with Roslyn
+   - AnalyzeClass: Extracts name, namespace, base types, properties, methods, attributes
+   - DetectDapperUsage: Looks for "using Dapper;", .Query, .QueryAsync, .Execute, etc., extracts SQL snippets
+   - DetectAdoNetUsage: Looks for SqlConnection, SqlCommand, ExecuteReader, ExecuteNonQuery, etc.
+   - Marks classes with IsDbRelated = true and sets DbTechnology ("EF Core", "Dapper", "ADO.NET")
+   - Kept existing AnalyzeEntityFrameworkContextAsync method - called from within AnalyzeCodeAsync for EF details
+
+3. **Tool Updates:**
+   - CodeContextAssistant.cs: Replaced AnalyzeEntityFrameworkContext tool with AnalyzeCode in GetCodeContextTools()
+   - OllamaLlmService.cs: Updated DefaultSystemPrompt, BuildTools(), BuildOllamaTools(), tool method, HandleToolCallAsync switch
+   - Updated system prompts from "analyze Entity Framework DbContext classes" to "analyze application code with special attention to database patterns (EF Core, Dapper, ADO.NET)"
+
+**Detection Patterns:**
+- Dapper: using Dapper;, .Query, .QueryAsync, .Execute, .ExecuteAsync, .QueryFirst, .QuerySingle, .QueryMultiple, SqlMapper
+- ADO.NET: SqlConnection, SqlCommand, SqlDataReader, DbConnection, DbCommand, .ExecuteReader, .ExecuteNonQuery, .ExecuteScalar, using System.Data.SqlClient, using Microsoft.Data.SqlClient
+
+**Key Files Changed:**
+- src/SqlAuditedQueryTool.Core/Models/Llm/CodeContextModels.cs
+- src/SqlAuditedQueryTool.Core/Interfaces/Llm/ICodeContextService.cs
+- src/SqlAuditedQueryTool.Llm/Services/CodeContextService.cs
+- src/SqlAuditedQueryTool.Llm/Services/CodeContextAssistant.cs
+- src/SqlAuditedQueryTool.Llm/Services/OllamaLlmService.cs
+
+**Architecture Pattern:** 
+- Two-tier analysis: Lightweight ClassAnalysis for all classes + detailed EntityFrameworkContext for DbContext classes
+- Database technology detection at class level with technology-specific details (DapperUsage, AdoNetUsage) attached
+- Roslyn syntax tree parsing for robust C# code analysis
+- String pattern matching for database API detection (simple but effective for first iteration)
+

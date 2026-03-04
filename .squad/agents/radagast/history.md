@@ -10,6 +10,39 @@
 ## Learnings
 <!-- Append new learnings below this line -->
 
+### Schema Validation for LLM-Generated SQL Queries
+
+**Context:** LLM chat sometimes generates SQL with invalid column/table names. Users execute these and get SQL errors.
+
+**Solution Implemented:**
+- Created `SqlSchemaValidator` in `SqlAuditedQueryTool.Llm/Services/` — lightweight regex-based SQL parser
+- Extracts table references (FROM, JOIN, INTO, UPDATE, MERGE INTO) and qualified column references (alias.Column)
+- Validates against `SchemaContext` loaded from `/api/schema`
+- Includes Levenshtein distance fuzzy matching for "did you mean?" suggestions (allows ~33% character errors)
+- Warnings are non-blocking — schema cache might be stale, so we never hard-block a query
+
+**Key Architecture Decisions:**
+- Validator is a static utility class (no DI needed — pure function of SQL + SchemaContext)
+- `SuggestedQuery` model gained `SchemaWarnings` property (List<string>)
+- Validation runs in `/api/chat` endpoint AFTER LLM response, BEFORE returning to frontend
+- Frontend shows warnings in an amber panel above the SQL suggestion
+- Added `InternalsVisibleTo` to Llm.csproj for test access to internal helpers
+
+**Key File Paths:**
+- `src/SqlAuditedQueryTool.Llm/Services/SqlSchemaValidator.cs` — the validator
+- `tests/SqlAuditedQueryTool.Llm.Tests/SqlSchemaValidatorTests.cs` — 17 unit tests
+- `src/SqlAuditedQueryTool.Core/Models/Llm/LlmResponse.cs` — `SuggestedQuery.SchemaWarnings`
+- `src/SqlAuditedQueryTool.App/Program.cs` — integration point (lines ~345-355)
+- `src/SqlAuditedQueryTool.App/ClientApp/src/api/queryApi.ts` — `QuerySuggestion.schemaWarnings`
+- `src/SqlAuditedQueryTool.App/ClientApp/src/components/ChatPanel.tsx` — warning display
+- `src/SqlAuditedQueryTool.App/ClientApp/src/components/ChatPanel.css` — warning styles
+
+**Parsing Approach:**
+- Regex-based, NOT a full SQL parser — intentionally lightweight
+- Handles bracket-quoted identifiers `[dbo].[Users]`, aliases, schema-qualified names
+- SQL keywords and functions are excluded via static HashSets to avoid false positives
+- Column validation only works for qualified references (table.Column or alias.Column) — unqualified columns are skipped to reduce noise
+
 ### 2026-02-24: CRITICAL - Fix Not Live Due To Hot Reload Not Detecting New Files
 
 **Context:** User implemented progressive boost fix for autocomplete (making "SELECT" appear at top when typing "SEL"). Restarted Aspire, waited for embeddings to load, hard reset browser. But typing "SEL" still showed LIKE at top, not SELECT.
@@ -615,6 +648,12 @@
 
 **Key Insights:**
 - Monaco Editor has multiple suggestion sources: language-specific providers + word-based suggestions + custom providers
+
+### 2026-03-03T15:35:43Z: Batch Completion — Sample Investigation Questions in README
+- **What:** Added "Sample Investigation Questions" section to README.md with 4 examples demonstrating LLM's use of code analysis and database context together.
+- **Why:** Helps users understand LLM capabilities beyond SQL generation. Shows how context (code + database) combines for better insights.
+- **Examples:** Each shows: user question → LLM's tool invocations (AnalyzeCode, execute_sql_query) → results returned to user.
+- **Impact:** Provides reference patterns for users writing their own investigation questions.
 - When multiple providers return results simultaneously, Monaco can show inconsistent/flickering UI
 - Disabling built-in providers ensures ONLY custom logic controls autocomplete behavior
 - Critical for embedding-based autocomplete where backend latency must not compete with instant word matching

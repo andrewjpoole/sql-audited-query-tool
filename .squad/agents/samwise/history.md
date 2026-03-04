@@ -103,6 +103,25 @@
 - **Root cause:** The `.AddViteApp()` method automatically creates a default HTTP endpoint. Calling `.WithHttpEndpoint(port: 5173)` without specifying a name tried to create a second endpoint also named "http", causing a conflict.
 - **Fix:** Changed `.WithHttpEndpoint(port: 5173)` to `.WithHttpEndpoint(port: 5173, name: "vite")` to give the endpoint a unique name.
 - **Key lesson:** When using `.WithHttpEndpoint()` on Aspire resources that already have a default HTTP endpoint (like ViteApp), always provide a unique `name` parameter to avoid duplicate endpoint name conflicts. Multiple endpoints are allowed, but each must have a distinct name.
+
+### 2026-02-28: SSE Streaming with Tool Calling Support
+- **Problem:** Chat interface was significantly slower than OpenWebUI because the backend didn't stream responses. The existing `request.Stream == true` path used `StreamChatAsync()` for token-by-token streaming but didn't support tool calling. The non-streaming path supported tool calls via `ChatAsync()` but returned only after all processing was complete.
+- **Solution:** Modified the streaming path (`request.Stream == true`) in `/api/chat` endpoint to support tool calling via Server-Sent Events (SSE). The approach uses the non-streaming `ChatAsync()` for LLM calls (which supports tool calling) but streams progress to the frontend as SSE events.
+- **SSE Event Types Implemented:**
+  - `{"type":"tool_start","tool":"execute_sql_query","args":{...}}` — Sent when tool execution starts
+  - `{"type":"tool_result","tool":"execute_sql_query","success":true}` — Sent when tool execution completes
+  - `{"type":"text","content":"..."}` — Final LLM response text after all tool calls complete
+  - `{"type":"done","sessionId":"...","message":"...","suggestion":{...},"executedQuery":"...","executedResult":{...},"executedQueries":[...]}` — Final structured result with all metadata the frontend needs
+- **Key Implementation Details:**
+  - Uses `ChatAsync()` (not `StreamChatAsync()`) within the tool calling loop — the "streaming" is about sending SSE events as work progresses, not token-by-token LLM streaming
+  - All existing logic preserved: chat history saving, audit logging, query history, schema validation
+  - Tool execution pipeline unchanged: `execute_sql_query` still goes through executor → audit → history flow
+  - Events are flushed immediately after each write for real-time frontend updates
+  - Non-streaming path (`request.Stream == false/null`) remains completely backward-compatible with existing JSON response format
+- **Variable Scoping Pattern:** Declared shared variables (`response`, `executedQueries`, `firstSuggestion`, `firstExecutedQuery`) before the if/else branches to avoid C# variable redeclaration errors. Both paths use these variables but initialize them at different points.
+- **File Modified:** `src\SqlAuditedQueryTool.App\Program.cs` — added `using System.Text.Json` for JsonSerializer, refactored streaming path to include full tool calling loop with SSE events
+- **Build Verified:** `dotnet build` succeeded after fixing type name (`LlmResponse` not `LlmChatResponse`) and variable scoping issues
+- **Next Steps:** Frontend needs updating to handle new SSE event types (Legolas's responsibility)
 - **Pattern:** `.WithHttpEndpoint(port: 5173, name: "vite")` instead of `.WithHttpEndpoint(port: 5173)` for resources with implicit HTTP endpoints.
 
 ### 2026-02-22: ASP.NET Core Request Timeout Configuration
@@ -387,6 +406,12 @@ Added SqlScriptRunner section with ReposBaseDirectory and Repositories dictionar
 - **Model hierarchy:** PropertySummary for general classes (lightweight), PropertyDefinition for EF entities (detailed with DB metadata)
 - **Detailed tracking:** DapperUsage and AdoNetUsage track individual method usages with line numbers and SQL snippets for audit trail compatibility
 **Implementation context:**
+
+### 2026-03-03T15:35:43Z: Batch Completion — Three Tasks
+- **SSE Streaming Chat with Tool Calling:** Modified `Program.cs` to stream structured SSE events (tool_start, tool_result, text, done) from `/api/chat` endpoint while preserving tool-calling loop infrastructure.
+- **Domain Methods on DemoCodeContext Entities:** Added business logic methods to Deposit, Account, Partner, User, and Reconciliation entities. No infrastructure changes.
+- **Exclude Failed Queries from Audit Trail:** Modified `CompositeAuditLogger` to skip external posting (GitHub/AzDO) for failed query executions. Local audit log (database) still captures failures. Prevents audit pollution.
+- **Coordinator Note:** Fixed Polly removal bug — HttpClient name was "ollamaModel" but CommunityToolkit.Aspire.OllamaSharp registers as "ollamaModel_httpClient". Updated `RemoveAllResilienceHandlers` and timeout config to use correct name.
 - The implementation in SqlAuditedQueryTool.Llm\Services\CodeContextService.cs already existed with the AnalyzeCodeAsync method
 - The implementation calls ExtractDatabaseUsagePatterns which expects the detailed DapperUsage/AdoNetUsage models with FilePath, ClassName, MethodName, LineNumber properties
 - The models were updated to match the existing implementation structure
@@ -398,4 +423,32 @@ Don't force EF-specific metadata onto general classes — use separate, appropri
 - src\SqlAuditedQueryTool.Core\Models\Llm\CodeContextModels.cs — added 7 new model classes
 - src\SqlAuditedQueryTool.Core\Interfaces\Llm\ICodeContextService.cs — added 1 new method
 **Next steps:** Radagast can now use AnalyzeCodeAsync to get comprehensive repository analysis including EF contexts, Dapper usage, and ADO.NET patterns with full audit trail support.
+
+### 2026-03-03: Audit System Refactor — Per-Request IDs + AzDO Support
+**What:** Major audit system refactor to support per-request issue/work item IDs and Azure DevOps work item audit trail alongside GitHub.
+**Architecture decisions:**
+1. **Composite pattern:** Created `CompositeAuditLogger` implementing `IAuditLogger` that delegates to `GitHubAuditLogger` and `AzDoAuditLogger`. This keeps each logger focused on one provider.
+2. **Per-request IDs:** `IssueNumber` removed from `GitHubAudit` config section. Both `gitHubIssueNumber` and `azDoWorkItemId` are now optional parameters on `LogQueryAsync`, supplied per-request from the UI.
+3. **GitHub "configured" check:** No longer requires `IssueNumber` in config. Configured = RepoOwner + RepoName + Token present.
+4. **AzDO REST API:** Used raw HttpClient with Basic auth (`:pat` base64), `POST .../comments?api-version=7.1-preview.4`. HTML-formatted comments (AzDO supports HTML, not markdown).
+5. **DI registration:** `GitHubAuditLogger` and `AzDoAuditLogger` registered as singletons (they hold config). `CompositeAuditLogger` as scoped (implements `IAuditLogger`). `IHttpClientFactory` used for AzDO HTTP calls.
+**Key files:**
+- `IAuditLogger.cs` — signature now `LogQueryAsync(request, result, int? gitHubIssueNumber, int? azDoWorkItemId)`
+- `CompositeAuditLogger.cs` — NEW, builds AuditEntry + delegates to both loggers
+- `AzDoAuditLogger.cs` — NEW, posts HTML comments to AzDO work items via REST API
+- `GitHubAuditLogger.cs` — no longer implements `IAuditLogger`, exposes `PostAuditCommentAsync(entry, issueNumber)`
+- `AuditEntry.cs` — added `AzDoWorkItemUrl`
+- `QueryHistory.cs` — added `AzDoWorkItemUrl`
+- `ExecuteQueryRequest` / `ChatRequest` records — added `GitHubIssueNumber` and `AzDoWorkItemId` optional fields
+- `appsettings.json` — removed `IssueNumber` from GitHubAudit, added `AzDoAudit` section
+- `README.md` — updated GitHub section, added AzDO section
+**Pattern:** When adding new audit providers, follow the composite pattern — create a provider-specific logger class with `PostAuditCommentAsync`, register it as a singleton, and wire it into `CompositeAuditLogger`.
+
+### 2026-02-24: Removed Polly Resilience from Ollama Chat Client
+- **Problem:** Aspire ServiceDefaults applies Polly standard resilience handler (retry, circuit breaker, timeout) globally via `ConfigureHttpClientDefaults`. This caused Ollama chat requests to silently retry on timeout — wrong for interactive chat UX.
+- **Fix:** Used `RemoveAllResilienceHandlers()` on the named `"ollamaModel"` HttpClient to opt it out of the global resilience pipeline. Other HTTP clients still get default Polly resilience from ServiceDefaults.
+- **Removed:** The `ConfigureAll<HttpStandardResilienceOptions>` block that widened Polly timeouts globally — no longer needed since Ollama is excluded entirely.
+- **Kept:** `OllamaOptions.ChatTimeoutSeconds` (default 120s) for `HttpClient.Timeout`, and ASP.NET request timeout middleware (5min) for long tool-calling loops.
+- **API note:** `RemoveAllResilienceHandlers()` is experimental (`EXTEXP0001`) in `Microsoft.Extensions.Http.Resilience` 10.1.0 — suppressed via `#pragma warning disable`.
+- **Key file:** `src/SqlAuditedQueryTool.App/Program.cs`
 

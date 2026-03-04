@@ -10,6 +10,43 @@
 ## Learnings
 <!-- Append new learnings below this line -->
 
+### 2026-02-28: SSE Streaming for Chat
+- Added Server-Sent Events (SSE) streaming support to ChatPanel for much faster chat responses
+- Pattern: Backend sends `stream: true` in request, receives four event types as `data: {json}\n\n`:
+  1. `tool_start` — tool execution begins (e.g., "execute_sql_query")
+  2. `tool_result` — tool completes with success flag
+  3. `text` — LLM's text response content
+  4. `done` — final event with full structured data (sessionId, message, suggestion, executedQuery, executedResult)
+- Architecture: Added `chatStream()` function to `queryApi.ts` alongside existing `chat()` for backward compat
+- SSE parsing: Buffered line-by-line parsing of `data:` prefixed events, handles malformed events gracefully
+- UX enhancements: 
+  - Stream status indicator below typing dots shows "🔧 Running query..." on tool_start, "✅ Query complete" on tool_result
+  - Status auto-clears after 1 second on success
+  - Cancel button still works via AbortController signal passed to chatStream
+- State management: ChatPanel uses local vars to accumulate streaming data (assistantContent, finalSuggestion, etc.), then creates final ChatMessage only on 'done' event
+- CSS: Added `.chat-typing-status` class for subtle status text below typing indicator
+- Files modified: `queryApi.ts` (new StreamEvent interface + chatStream function), `ChatPanel.tsx` (updated handleSend to use streaming), `ChatPanel.css` (new status styles)
+- Key insight: Streaming allows user to see query execution progress in real-time instead of waiting for full response, significantly improving perceived performance
+
+### 2026-02-28: Chat Cancel Button
+- Added cancel button to ChatPanel that replaces the Send button while a request is loading
+- Pattern: `AbortController` stored in a `useRef` — created on send, cleared on completion/error, called on cancel click
+- `queryApi.ts` `chat()` now accepts an optional `AbortSignal` parameter; when caller provides a signal, the function delegates abort control to the caller and skips creating its own internal controller
+- Cancel button repositioned: now appears as a small subtle "✕" inline next to the three pulsing dots in the typing indicator bubble, not near the Send button
+- Send button always visible (disabled while loading); cancel is only in the chat message area
+- CSS: `.chat-typing-cancel` — minimal no-background button, 11px, turns red on hover
+- Error message distinguishes manual cancel ("Request cancelled.") from timeout ("Request timed out...")
+- Key files: `queryApi.ts`, `ChatPanel.tsx`, `ChatPanel.css`
+
+### 2026-02-28: Audit Trail UI Controls
+- Added optional GitHub Issue # and AzDO Work Item # inputs to the app header for audit context
+- Pattern: audit trail fields stored as `number | undefined` state in App.tsx, passed down as props to ChatPanel and through to all API calls
+- API params use optional trailing parameters on `executeQuery()` and `chat()` — keeps backward compat, no breaking changes
+- CSS: `.audit-trail-inputs` group positioned with `margin-left: auto` to push to far right of header, compact inline layout
+- Hid number input spinners via `-moz-appearance: textfield` and `::-webkit-inner-spin-button` for cleaner look
+- Key files modified: `queryApi.ts`, `App.tsx`, `App.css`, `ChatPanel.tsx`
+- Backend DTOs expect camelCase: `gitHubIssueNumber`, `azDoWorkItemId` — matches JSON serialization convention
+
 ## Foundation Work Summarization (2026-02-22 to 2026-02-24)
 
 This section consolidates early foundational work before recent focused features.

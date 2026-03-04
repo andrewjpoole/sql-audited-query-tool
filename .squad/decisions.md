@@ -563,6 +563,124 @@ builder.AddOllamaApiClient("ollamaModel");
 
 ### 2026-02-23: SQL Keywords Added to Autocomplete Vector Store
 **By:** Radagast (LLM Engineer)
+
+### 2026-02-28: Audit Trail UI Controls — GitHub Issue & AzDO Work Item Tracking
+**By:** Legolas (Frontend Dev)
+**What:** Added optional GitHub Issue # and AzDO Work Item # inputs to the app header. Wired through to `executeQuery()` and `chat()` API calls.
+**Key Decisions:**
+- Inputs placed in header bar right-aligned with `margin-left: auto`
+- Used `number | undefined` state (not `null`) to match TypeScript optional convention — `undefined` values omitted from JSON
+- Number input spinners hidden for dark theme aesthetic
+- Props drilled to ChatPanel rather than context — simple for two values
+**Why:** Samwise refactored audit to support posting comments to GitHub issues and AzDO work items. Frontend captures these IDs and passes them on every API call.
+**Files:** `queryApi.ts`, `App.tsx`, `App.css`, `ChatPanel.tsx`
+
+### 2026-02-28: Chat Cancel Button — AbortController Ownership
+**By:** Legolas (Frontend Dev)
+**What:** Added manual cancel button for slow LLM requests. `chat()` API now accepts optional `AbortSignal` parameter.
+**Key Decisions:**
+- `chat()` accepts optional `AbortSignal` — caller owns abort control
+- ChatPanel creates `AbortController` per request, stored in `useRef`
+- Cancel button replaces Send button during loading (single button, never both)
+**Rationale:**
+- Passing `AbortSignal` (not `AbortController`) follows web platform convention
+- Ref-based storage avoids unnecessary re-renders
+- Replacing Send with Cancel (not showing both) prevents accidental double-sends
+
+### 2026-02-24: Broaden Code Analysis from EF-Only to All Database Patterns
+**By:** Radagast (LLM Engineer)
+**What:** Replaced `AnalyzeEntityFrameworkContext` tool with broader `AnalyzeCode` tool. Now detects EF Core, Dapper, and ADO.NET patterns.
+**Key Decisions:**
+- Analyzes ALL C# classes in directory (not just DbContext)
+- Auto-detects database-related patterns for each technology
+- Provides class-level summaries with technology-specific details
+- Still performs deep EF Core analysis for DbContext classes
+**Rationale:** LLM can help with queries across all database access patterns, not just EF. Technology detection automatic.
+**Detection Strategy:**
+- EF Core: Roslyn inheritance check for DbContext
+- Dapper: String pattern matching for `.Query<`, `.Execute(`, imports
+- ADO.NET: String pattern matching for SqlConnection, SqlCommand, ExecuteReader
+
+### 2026-02-24: Downgrade LLM Model from qwen3.5:27b to qwen3:14b
+**By:** Radagast (LLM Engineer)
+**What:** Switched model to fit 16GB memory limit. qwen3:27b required ~17GB (OOM), qwen3:14b requires ~8GB.
+**Key Decisions:**
+- Model: qwen3.5:27b → qwen3:14b (27B → 14B parameters)
+- ChatTimeoutSeconds kept at 300 (appropriate for CPU inference)
+- No code changes — tool calling and thinking mode identical
+**Rationale:** Memory constraints on user's Docker/WSL environment. Smaller model = faster CPU inference.
+**Trade-offs:** Slightly lower reasoning capability (14B vs 27B), but acceptable for SQL generation tasks.
+
+### 2026-02-24: Strip Thinking Mode Content from qwen3.5 Responses
+**By:** Radagast (LLM Engineer)
+**What:** Always strip `<think>...</think>` blocks from LLM responses before returning to frontend.
+**Key Decisions:**
+- Non-streaming: Static compiled regex applied once to complete response
+- Streaming: Stateful `StreamingThinkingFilter` class handles chunks that split mid-tag
+- Warnings, not blocks — validation issues surfaced but never prevent queries
+**Why:** Thinking mode exposes internal reasoning, cluttering UI and causing 500 errors.
+**Implementation:** Stateful filter needed for streaming because thinking blocks span multiple chunks.
+
+### 2026-02-24: Remove Polly Resilience from Ollama Chat Client
+**By:** Samwise (Backend Dev)
+**What:** Removed Polly (retry, circuit breaker, timeout) from Ollama chat client. Timeout controlled solely by HttpClient.
+**Key Decisions:**
+- Use `RemoveAllResilienceHandlers()` on "ollamaModel" HttpClient
+- Remove global `ConfigureAll<HttpStandardResilienceOptions>` workaround
+- Keep Polly for all other HTTP clients (GitHub, AzDO)
+**Why:** Interactive chat shouldn't silently retry on timeout. User expects to cancel and manually retry.
+**Impact:** Ollama requests not retried/circuit-broken by Polly, only by HttpClient.Timeout.
+
+### 2026-02-25: Schema Validation for LLM-Generated SQL Queries
+**By:** Radagast (LLM Engineer)
+**What:** Added lightweight `SqlSchemaValidator` that checks LLM-generated queries against cached database schema. Includes "did you mean?" fuzzy matching.
+**Key Decisions:**
+- Warnings, not blocks — validation issues never prevent queries from being shown
+- Lightweight regex parsing (no heavy SQL parser library)
+- Static utility class — no DI, no state
+- Fuzzy matching via Levenshtein distance (~33% threshold)
+**Why:** LLM occasionally generates SQL with misspelled/hallucinated table/column names. Catches these before user sees them.
+**Trade-offs:** Only validates qualified column refs (e.g., `u.Name`). Regex parsing can't handle complex CTEs/subqueries.
+
+### 2026-03-03: Audit System Refactor — Per-Request GitHub & AzDO IDs
+**By:** Samwise (Backend Dev)
+**What:** Refactored audit system so GitHub issue number and AzDO work item ID are per-request (from UI), not config.
+**Key Decisions:**
+- `CompositeAuditLogger` implements `IAuditLogger`, delegates to `GitHubAuditLogger` and `AzDoAuditLogger`
+- Both IDs optional on `LogQueryAsync` — if null, provider skipped
+- `IssueNumber` removed from `GitHubAudit` config (only RepoOwner, RepoName, Token)
+- `AzDoAudit` config section added (Organisation, Project, Token)
+- `AuditEntry` and `QueryHistory` carry both `GitHubIssueUrl` and `AzDoWorkItemUrl`
+**Why:** Different queries may target different issues. Teams using Azure DevOps need support.
+**Impact:** Frontend (Legolas) needs optional GitHub/AzDO fields in query execution and chat UIs. API backward-compatible.
+
+### 2026-03-03: Code Analysis Model Hierarchy — Two-Tier Design
+**By:** Samwise (Backend Dev)
+**What:** Created two-tier model hierarchy for code analysis: general `ClassAnalysis` (lightweight) + `EntityDefinition` (EF-specific detailed).
+**Key Decisions:**
+- **Tier 1:** `ClassAnalysis` with `PropertySummary` (Name, Type, Attributes only)
+- **Tier 2:** `EntityDefinition` with `PropertyDefinition` (includes IsKey, ColumnName, MaxLength, etc.)
+- Usage pattern tracking: `DapperUsage` and `AdoNetUsage` with line numbers and SQL snippets
+**Rationale:** Separation of concerns — general classes don't need EF metadata. Performance — lightweight analysis for general code. Audit trail compatibility — detailed usage tracking supports audit requirements.
+**Alternatives Rejected:**
+- Single unified Property model (too much EF metadata in general analysis)
+- Aggregate Dapper/ADO usage at class level without line numbers (loses audit granularity)
+
+### 2026-03-03: Sample Investigation Questions in README
+**By:** Radagast (LLM Engineer)
+**What:** Added "Sample Investigation Questions" section to README.md with 4 examples demonstrating how LLM uses code and database context.
+**Key Decisions:**
+- Each example shows: user question → LLM's tool use (code analysis + DB queries) → results
+**Why:** Helps users understand LLM capabilities beyond simple SQL generation. Shows how context is combined for better insights.
+**Impact:** Reference patterns for users writing their own investigation questions.
+
+### 2026-03-03: Exclude Failed Queries from Audit Trail (External)
+**By:** Samwise (Backend Dev)
+**What:** Modified `CompositeAuditLogger` to skip external posting (GitHub/AzDO) for failed query executions.
+**Key Decisions:**
+- Failed queries still captured in local audit log (database)
+- External posting skipped for failures only
+**Why:** Prevents audit trail pollution. Failed queries are system/dev issues, not user actions requiring tracking in external systems.
 **What:** Added 50+ common T-SQL keywords to vector store during schema embedding initialization.
 **Problem:** Typing "SELEC" showed no suggestions (keywords never embedded).
 **Solution:** SchemaEmbeddingService.AddSqlKeywords() embeds keywords in "keyword" category at startup.

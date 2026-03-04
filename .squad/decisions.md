@@ -734,3 +734,34 @@ builder.AddOllamaApiClient("ollamaModel");
 **Alternatives Rejected:** Single unified property model (pollutes general analysis), aggregate usage at class level (loses granularity), minimal tracking without line numbers (insufficient for audit).
 **Consequences:** ✅ Clear separation, audit support, backward compatible. ⚠️ Two property models (developers must choose).
 **Status:** Implemented. Samwise updated CodeAnalysisResult, ClassAnalysis, MethodSummary, PropertySummary, DapperUsage, AdoNetUsage models and ICodeContextService.AnalyzeCodeAsync interface method.
+
+### 2026-03-04: User Directives
+
+**By:** Andrew Poole (via Copilot)
+
+**What:**
+1. Chat query comments: Queries suggested from the chat should include SQL comments to explain what they do.
+2. Simulate output specificity: Simulate output should be more specific, e.g. '1 row deleted' rather than just '1'.
+3. SQL script runner file conventions:
+   - query.sql contains a SELECT run before and after update.sql to show the change.
+   - update.sql requires DECLARE @expectedAffectedRowCount INT = 1;
+   - No need to ask the user for the database name.
+
+**Why:** User request - captured for team memory.
+
+**Status:** Implemented by Samwise and Legolas.
+
+### 2026-03-04: Script Generator File Conventions
+
+**By:** Samwise (Backend Dev)
+
+**What:** Established file conventions for sql-script-runner scripts:
+- **query.sql:** Verification SELECT, run before and after update.sql, no @expectedAffectedRowCount
+- **update.sql:** Write SQL with DECLARE @expectedAffectedRowCount INT = {N}; at top
+- Removed DatabaseName from model
+
+**Why:** Alignment with sql-script-runner expectations. Safety and verification patterns.
+
+**Impact:** ScriptGeneratorService, ScriptGeneratorRequest, Program.cs updated. Removed DatabaseName field.
+
+**Status:** Implemented. Build passed. TypeScript check passed.

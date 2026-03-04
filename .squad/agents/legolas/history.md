@@ -10,6 +10,24 @@
 ## Learnings
 <!-- Append new learnings below this line -->
 
+### 2026-02-28: Descriptive Simulation Output & Script Preview Updates
+- **Change 1:** Enhanced WriteScriptSimulator affected rows display with operation-aware text formatting
+  - Added `getOperationType()` helper that parses SQL to detect UPDATE/INSERT/DELETE from statement start
+  - Added `formatAffectedRowsText()` to show contextual messages: "1 row updated", "5 rows deleted", "10 rows inserted", etc.
+  - Proper singular/plural handling: "1 row" vs "N rows"
+  - Falls back to "N rows affected" if operation type unclear
+- **Change 2:** Removed database name field from ScriptGeneratorModal
+  - Removed `databaseName` state variable and form field (lines 25, 200-209)
+  - Removed from `ScriptGenerationRequest` object sent to backend
+  - Updated `ScriptGenerationRequest` interface in queryApi.ts to match
+- **Change 3:** Updated script preview templates to match Andrew's new conventions
+  - **query.sql**: Now shows verification query template with TODO instructions, no @expectedAffectedRowCount declaration
+  - **update.sql**: Added `DECLARE @expectedAffectedRowCount INT = N;` at top, replaced `SELECT @@ROWCOUNT` with proper validation using `IF @@ROWCOUNT <> @expectedAffectedRowCount THROW`
+  - Removed Database comment line from update.sql header
+- **Pattern learned:** Simple SQL parsing via string prefix matching works well for detecting operation types in UI context
+- **Files modified:** WriteScriptSimulator.tsx, ScriptGeneratorModal.tsx, queryApi.ts
+- **Verification:** TypeScript compilation passed with `npx tsc --noEmit`
+
 ### 2026-02-28: SSE Streaming for Chat
 - Added Server-Sent Events (SSE) streaming support to ChatPanel for much faster chat responses
 - Pattern: Backend sends `stream: true` in request, receives four event types as `data: {json}\n\n`:

@@ -452,3 +452,12 @@ Don't force EF-specific metadata onto general classes — use separate, appropri
 - **API note:** `RemoveAllResilienceHandlers()` is experimental (`EXTEXP0001`) in `Microsoft.Extensions.Http.Resilience` 10.1.0 — suppressed via `#pragma warning disable`.
 - **Key file:** `src/SqlAuditedQueryTool.App/Program.cs`
 
+
+### 2026-03-04T16:19:11Z: Script Generator & LLM Prompt Enhancements
+- **LLM system prompt:** Added instruction to `DefaultSystemPrompt` in `OllamaLlmService.cs` telling the model to include SQL comments (-- comment) when suggesting queries to explain what each part does.
+- **Script generation file conventions fixed:** In `ScriptGeneratorService.cs`, swapped the logic for query.sql and update.sql to match Andrew's directive:
+  - **query.sql** now contains a verification SELECT query (run before and after update.sql) WITHOUT `@expectedAffectedRowCount` declaration.
+  - **update.sql** now contains the actual write SQL WITH `DECLARE @expectedAffectedRowCount INT = {N};` at the top, plus row count verification logic using `IF @@ROWCOUNT <> @expectedAffectedRowCount THROW`.
+- **DatabaseName removed:** Removed `DatabaseName` property from `ScriptGenerationRequest` model and all references in `Program.cs` (both the instantiation and the `GenerateScriptsRequest` record). This simplifies the model per Andrew's decision.
+- **Generated content cleaned up:** Removed `-- Database: {databaseName}` comment line from update.sql template.
+- **Build verified:** All changes compile successfully with no errors.

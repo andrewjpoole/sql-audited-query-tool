@@ -782,3 +782,16 @@ builder.AddOllamaApiClient("ollamaModel");
 **Files Modified:** src\SqlAuditedQueryTool.App\Program.cs, src\SqlAuditedQueryTool.App\ClientApp\src\api\queryApi.ts, src\SqlAuditedQueryTool.App\ClientApp\src\components\ChatPanel.tsx
 **Trade-offs:** Latency +1-3s per retry (max ~6s for 2 retries), retry loop adds ~70 lines to each path (could extract later if more retry patterns emerge)
 **Testing:** Backend build verified ✅, Frontend build verified ✅
+
+### 2026-03-06T12:08:00Z: Chat & Simulator Integration Fixes — Legolas
+**By:** Legolas (Frontend Dev)
+**Status:** Completed
+**What:** Four improvements to chat panel and write simulator integration:
+1. **Chat always visible** — ChatPanel now renders in both Query and Simulator modes (was query-only). Added `appMode` prop to adapt behavior per mode (e.g., hide "Insert & Execute" in simulator).
+2. **Send to Simulator** — Fix query SuggestionCards have "🔬 Send to Simulator" button that switches to simulator mode and injects SQL via `externalSql` prop on WriteScriptSimulator.
+3. **Dedup suggested queries** — When a SuggestionCard is present, SQL code blocks are stripped from the assistant message text to prevent duplicate display.
+4. **Copy button** — "📋 Copy" button on all SuggestionCards using clipboard API with 2s feedback ("✅ Copied!").
+**Rationale:** Usability — chat should assist in both modes; fix queries need a safe path to the simulator; duplicate SQL was confusing; copy is a basic UX expectation.
+**Files Modified:** src/SqlAuditedQueryTool.App/ClientApp/src/App.tsx, ChatPanel.tsx, ChatPanel.css, WriteScriptSimulator.tsx
+**Impact on other agents:** WriteScriptSimulator now accepts optional `externalSql` prop. ChatPanel requires new props: `appMode` and `onSendToSimulator`.
+**Testing:** npm build passes ✅

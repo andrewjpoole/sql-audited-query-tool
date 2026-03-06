@@ -10,62 +10,23 @@
 ## Learnings
 <!-- Append new learnings below this line -->
 
-### 2026-02-28: Descriptive Simulation Output & Script Preview Updates
-- **Change 1:** Enhanced WriteScriptSimulator affected rows display with operation-aware text formatting
-  - Added `getOperationType()` helper that parses SQL to detect UPDATE/INSERT/DELETE from statement start
-  - Added `formatAffectedRowsText()` to show contextual messages: "1 row updated", "5 rows deleted", "10 rows inserted", etc.
-  - Proper singular/plural handling: "1 row" vs "N rows"
-  - Falls back to "N rows affected" if operation type unclear
-- **Change 2:** Removed database name field from ScriptGeneratorModal
-  - Removed `databaseName` state variable and form field (lines 25, 200-209)
-  - Removed from `ScriptGenerationRequest` object sent to backend
-  - Updated `ScriptGenerationRequest` interface in queryApi.ts to match
-- **Change 3:** Updated script preview templates to match Andrew's new conventions
-  - **query.sql**: Now shows verification query template with TODO instructions, no @expectedAffectedRowCount declaration
-  - **update.sql**: Added `DECLARE @expectedAffectedRowCount INT = N;` at top, replaced `SELECT @@ROWCOUNT` with proper validation using `IF @@ROWCOUNT <> @expectedAffectedRowCount THROW`
-  - Removed Database comment line from update.sql header
-- **Pattern learned:** Simple SQL parsing via string prefix matching works well for detecting operation types in UI context
-- **Files modified:** WriteScriptSimulator.tsx, ScriptGeneratorModal.tsx, queryApi.ts
-- **Verification:** TypeScript compilation passed with `npx tsc --noEmit`
+### Chat & Simulator Integration Fixes (4 tasks)
+- **Chat always visible:** ChatPanel now renders in both query and simulator modes. `appMode` prop passed to ChatPanel so it can adapt behavior per mode (e.g. hide "Insert & Execute" in simulator mode).
+- **Send to Simulator flow:** Fix queries get a "🔬 Send to Simulator" button. App.tsx holds `simulatorSql` state, passes it as `externalSql` to WriteScriptSimulator. WriteScriptSimulator accepts it via useEffect. Clicking switches appMode and injects SQL.
+- **Deduplication pattern:** When a SuggestionCard is present on a message, SQL code blocks are stripped from the assistant text via `stripSqlCodeBlocks()` to avoid showing the same SQL twice (once in text, once in card). The `extractSqlBlocks` rendering is skipped when `hasSuggestion` is true.
+- **Copy button:** SuggestionCard now has a "📋 Copy" button using `navigator.clipboard.writeText()` with 2-second "✅ Copied!" feedback. Placed first in button row.
+- **Key file paths:** App.tsx, ChatPanel.tsx, ChatPanel.css, WriteScriptSimulator.tsx
 
-### 2026-02-28: SSE Streaming for Chat
-- Added Server-Sent Events (SSE) streaming support to ChatPanel for much faster chat responses
-- Pattern: Backend sends `stream: true` in request, receives four event types as `data: {json}\n\n`:
-  1. `tool_start` — tool execution begins (e.g., "execute_sql_query")
-  2. `tool_result` — tool completes with success flag
-  3. `text` — LLM's text response content
-  4. `done` — final event with full structured data (sessionId, message, suggestion, executedQuery, executedResult)
-- Architecture: Added `chatStream()` function to `queryApi.ts` alongside existing `chat()` for backward compat
-- SSE parsing: Buffered line-by-line parsing of `data:` prefixed events, handles malformed events gracefully
-- UX enhancements: 
-  - Stream status indicator below typing dots shows "🔧 Running query..." on tool_start, "✅ Query complete" on tool_result
-  - Status auto-clears after 1 second on success
-  - Cancel button still works via AbortController signal passed to chatStream
-- State management: ChatPanel uses local vars to accumulate streaming data (assistantContent, finalSuggestion, etc.), then creates final ChatMessage only on 'done' event
-- CSS: Added `.chat-typing-status` class for subtle status text below typing indicator
-- Files modified: `queryApi.ts` (new StreamEvent interface + chatStream function), `ChatPanel.tsx` (updated handleSend to use streaming), `ChatPanel.css` (new status styles)
-- Key insight: Streaming allows user to see query execution progress in real-time instead of waiting for full response, significantly improving perceived performance
+### 2026-03-06: Schema Validation Auto-Retry — Frontend Event Handling
+- **Change:** Added schema_retry SSE event handling in ChatPanel.tsx
+- **Implementation:** Backend now sends schema_retry events during schema validation failures (before showing raw validation errors to user)
+- **Event Type:** Added to StreamEvent union with fields: `attempt`, `maxAttempts`
+- **UI Behavior:** ChatPanel shows progress status: "🔄 Fixing schema issues (attempt N/M)..." 
+- **Backend Integration:** Samwise implemented retry loop in Program.cs (streaming path sends SSE events)
+- **No UI Changes:** SuggestionCard.tsx already handles remaining schemaWarnings — no modifications needed
+- **Pattern:** SSE events provide real-time feedback during multi-step backend operations
 
-### 2026-02-28: Chat Cancel Button
-- Added cancel button to ChatPanel that replaces the Send button while a request is loading
-- Pattern: `AbortController` stored in a `useRef` — created on send, cleared on completion/error, called on cancel click
-- `queryApi.ts` `chat()` now accepts an optional `AbortSignal` parameter; when caller provides a signal, the function delegates abort control to the caller and skips creating its own internal controller
-- Cancel button repositioned: now appears as a small subtle "✕" inline next to the three pulsing dots in the typing indicator bubble, not near the Send button
-- Send button always visible (disabled while loading); cancel is only in the chat message area
-- CSS: `.chat-typing-cancel` — minimal no-background button, 11px, turns red on hover
-- Error message distinguishes manual cancel ("Request cancelled.") from timeout ("Request timed out...")
-- Key files: `queryApi.ts`, `ChatPanel.tsx`, `ChatPanel.css`
-
-### 2026-02-28: Audit Trail UI Controls
-- Added optional GitHub Issue # and AzDO Work Item # inputs to the app header for audit context
-- Pattern: audit trail fields stored as `number | undefined` state in App.tsx, passed down as props to ChatPanel and through to all API calls
-- API params use optional trailing parameters on `executeQuery()` and `chat()` — keeps backward compat, no breaking changes
-- CSS: `.audit-trail-inputs` group positioned with `margin-left: auto` to push to far right of header, compact inline layout
-- Hid number input spinners via `-moz-appearance: textfield` and `::-webkit-inner-spin-button` for cleaner look
-- Key files modified: `queryApi.ts`, `App.tsx`, `App.css`, `ChatPanel.tsx`
-- Backend DTOs expect camelCase: `gitHubIssueNumber`, `azDoWorkItemId` — matches JSON serialization convention
-
-## Foundation Work Summarization (2026-02-22 to 2026-02-24)
+## Foundation Work Summarization (2026-02-22 to 2026-03-06)
 
 This section consolidates early foundational work before recent focused features.
 
@@ -155,3 +116,12 @@ This section consolidates early foundational work before recent focused features
 - **Backend Integration:** Samwise implemented retry loop in Program.cs (streaming path sends SSE events)
 - **No UI Changes:** SuggestionCard.tsx already handles remaining schemaWarnings — no modifications needed
 - **Pattern:** SSE events provide real-time feedback during multi-step backend operations
+
+### 2026-03-06T12:08:00Z: Chat & Simulator Integration — 4 Fixes Complete
+- **Chat always visible in both modes** — Added `appMode` prop to ChatPanel, conditional rendering of mode-specific features
+- **Send to Simulator flow** — SuggestionCards now have "🔬 Send to Simulator" button; App.tsx holds `simulatorSql` state; WriteScriptSimulator accepts `externalSql` via useEffect
+- **Deduplication pattern** — When SuggestionCard present, `stripSqlCodeBlocks()` removes code fences from assistant text; `hasSuggestion` flag skips extractSqlBlocks rendering
+- **Copy button** — All SuggestionCards have "📋 Copy" button using `navigator.clipboard.writeText()` with 2-second feedback
+- **Files touched:** App.tsx, ChatPanel.tsx, ChatPanel.css, WriteScriptSimulator.tsx
+- **Build status:** npm build ✅
+- **Impact:** No breaking changes; WriteScriptSimulator `externalSql` prop optional; ChatPanel props `appMode` and `onSendToSimulator` required

@@ -765,3 +765,20 @@ builder.AddOllamaApiClient("ollamaModel");
 **Impact:** ScriptGeneratorService, ScriptGeneratorRequest, Program.cs updated. Removed DatabaseName field.
 
 **Status:** Implemented. Build passed. TypeScript check passed.
+### 2026-03-06T09:56:15Z: User directive — Schema Validation Auto-Retry
+**By:** Andrew (via Copilot)
+**What:** Validation errors on DB entity names in chat-suggested queries should be sent back to the chat/LLM for auto-correction, not shown to the user directly. The user shouldn't have to manually ask the chat to fix them.
+**Why:** User request — captured for team memory
+
+### 2026-03-06T11:02:57Z: Schema Validation Auto-Retry for LLM Queries — Samwise
+**By:** Samwise (Backend Dev)
+**Status:** Implemented
+**What:** Modified the /api/chat endpoint to automatically retry schema validation failures with the LLM before showing warnings to users. When SqlSchemaValidator.Validate() finds issues in suggested queries, the system feeds those warnings back to the LLM and asks it to fix the query, retrying up to 2 times.
+**Implementation Details:**
+- **Backend (Program.cs):** Both streaming and non-streaming paths now validate queries using SqlSchemaValidator.Validate(sql, schema). If warnings found, feedback is built as a user message and fed back to LLM (max 2 attempts). On streaming path, schema_retry SSE event is sent for frontend UX. If warnings persist after retries, they attach to SuggestedQuery.SchemaWarnings (fallback).
+- **Frontend (queryApi.ts):** Added schema_retry to StreamEvent type with ttempt and maxAttempts fields
+- **Frontend (ChatPanel.tsx):** Handles schema_retry event by showing status: "🔄 Fixing schema issues (attempt N/M)..."
+**Rationale:** Better UX (users see "Fixing schema issues..." instead of raw validation errors), self-correcting (LLM can fix its own mistakes when given feedback), fail-safe (after 2 retries, warnings still flow to frontend as before), backward compatible.
+**Files Modified:** src\SqlAuditedQueryTool.App\Program.cs, src\SqlAuditedQueryTool.App\ClientApp\src\api\queryApi.ts, src\SqlAuditedQueryTool.App\ClientApp\src\components\ChatPanel.tsx
+**Trade-offs:** Latency +1-3s per retry (max ~6s for 2 retries), retry loop adds ~70 lines to each path (could extract later if more retry patterns emerge)
+**Testing:** Backend build verified ✅, Frontend build verified ✅

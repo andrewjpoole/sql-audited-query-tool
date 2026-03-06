@@ -147,3 +147,11 @@ This section consolidates early foundational work before recent focused features
   - Components: src/SqlAuditedQueryTool.App/ClientApp/src/components/WriteScriptSimulator.tsx & ScriptGeneratorModal.tsx
   - API client: src/SqlAuditedQueryTool.App/ClientApp/src/api/queryApi.ts
   - Main app: src/SqlAuditedQueryTool.App/ClientApp/src/App.tsx & App.css
+### 2026-03-06: Schema Validation Auto-Retry — Frontend Event Handling
+- **Change:** Added schema_retry SSE event handling in ChatPanel.tsx
+- **Implementation:** Backend now sends schema_retry events during schema validation failures (before showing raw validation errors to user)
+- **Event Type:** Added to StreamEvent union with fields: ttempt, maxAttempts
+- **UI Behavior:** ChatPanel shows progress status: "🔄 Fixing schema issues (attempt N/M)..." 
+- **Backend Integration:** Samwise implemented retry loop in Program.cs (streaming path sends SSE events)
+- **No UI Changes:** SuggestionCard.tsx already handles remaining schemaWarnings — no modifications needed
+- **Pattern:** SSE events provide real-time feedback during multi-step backend operations

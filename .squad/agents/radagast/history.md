@@ -809,4 +809,17 @@
 - Database technology detection at class level with technology-specific details (DapperUsage, AdoNetUsage) attached
 - Roslyn syntax tree parsing for robust C# code analysis
 - String pattern matching for database API detection (simple but effective for first iteration)
-
+### 2026-03-06: Schema Validation Auto-Retry — LLM Feedback Loop
+- **Context:** User directive: validation errors should be auto-corrected by LLM instead of shown to user
+- **Implementation:** Samwise added retry loop in /api/chat endpoint (both streaming and non-streaming paths)
+- **How It Works:** When SqlSchemaValidator.Validate() finds warnings:
+  1. Build feedback message: "Your suggested query has schema validation issues:\n\n{details}\n\nPlease fix the query and suggest a corrected version."
+  2. Add feedback as user message to llmRequest.Messages
+  3. Call llmService.ChatAsync(llmRequest, ct) to get corrected response
+  4. Save corrected response to chat history
+  5. Repeat up to 2 times max
+- **Rationale:** LLM can self-correct when given specific validation feedback. Reduces poor UX of showing raw validation errors.
+- **Max Retries:** 2 (hardcoded, can be configurable later)
+- **Fail-Safe:** If warnings persist after retries, they attach to SuggestedQuery.SchemaWarnings (existing fallback)
+- **Message History:** Each retry saves assistant response to preserve conversation flow for debugging
+- **Latency Impact:** ~1-3 seconds per retry (6 seconds max for 2 retries)

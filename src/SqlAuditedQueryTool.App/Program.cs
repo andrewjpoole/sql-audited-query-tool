@@ -1,3 +1,4 @@
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Http;
@@ -237,10 +238,10 @@ app.MapPost("/api/chat", async (
         {
             context.Response.ContentType = "text/event-stream";
             
-            // Streaming with tool calling support
+            // Phase 1: Handle tool calling with non-streaming ChatAsync
+            // Tool calls require the full response to detect, so we use ChatAsync here
             response = await llmService.ChatAsync(llmRequest, ct);
 
-            // Tool calling loop with SSE events
             while (response.ToolCalls.Count > 0)
             {
                 logger.LogInformation("LLM requested {ToolCallCount} tool calls", response.ToolCalls.Count);
@@ -349,6 +350,36 @@ app.MapPost("/api/chat", async (
                 response = await llmService.ChatAsync(llmRequest, ct);
             }
 
+            // Phase 2: Stream the final text response with thinking support
+            // Use StreamChatAsync to deliver text incrementally via SSE events.
+            // After tool calls, this re-generates the response with full conversation context.
+            // Without tool calls, this is the primary (and only) response generation.
+            var fullTextBuilder = new StringBuilder();
+            await foreach (var chunk in llmService.StreamChatAsync(llmRequest, ct))
+            {
+                var eventType = chunk.IsThinking ? "thinking" : "text";
+                var sseEvent = JsonSerializer.Serialize(new
+                {
+                    type = eventType,
+                    content = chunk.Content
+                });
+                await context.Response.WriteAsync($"data: {sseEvent}\n\n", ct);
+                await context.Response.Body.FlushAsync(ct);
+
+                if (!chunk.IsThinking)
+                    fullTextBuilder.Append(chunk.Content);
+            }
+
+            var streamedText = fullTextBuilder.ToString();
+
+            // Build response from streamed text for history/validation
+            response = new LlmResponse
+            {
+                Text = streamedText,
+                SuggestedQueries = SqlAuditedQueryTool.Llm.Services.OllamaLlmService.ParseSuggestedQueries(streamedText),
+                ToolCalls = []
+            };
+
             // Save assistant response to history
             await chatHistoryStore.AddMessageAsync(session.Id, new ChatMessageHistory
             {
@@ -358,15 +389,6 @@ app.MapPost("/api/chat", async (
                 Content = response.Text,
                 Timestamp = DateTimeOffset.UtcNow
             });
-
-            // Send text event with final message
-            var textEvent = JsonSerializer.Serialize(new
-            {
-                type = "text",
-                content = response.Text
-            });
-            await context.Response.WriteAsync($"data: {textEvent}\n\n", ct);
-            await context.Response.Body.FlushAsync(ct);
 
             firstSuggestion = response.SuggestedQueries.FirstOrDefault();
             firstExecutedQuery = executedQueries.FirstOrDefault();

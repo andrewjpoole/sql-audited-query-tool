@@ -7,7 +7,7 @@ public interface ILlmService
 {
     Task<Models.Llm.LlmResponse> ChatAsync(Models.Llm.LlmChatRequest request, CancellationToken cancellationToken = default);
 
-    IAsyncEnumerable<string> StreamChatAsync(Models.Llm.LlmChatRequest request, CancellationToken cancellationToken = default);
+    IAsyncEnumerable<Models.Llm.StreamChunk> StreamChatAsync(Models.Llm.LlmChatRequest request, CancellationToken cancellationToken = default);
 
     Task<string> ExecuteToolCallAsync(Models.Llm.ToolCallRequest toolCall, CancellationToken cancellationToken = default);
 }

@@ -68,7 +68,8 @@ public sealed class OllamaLlmService : ILlmService
             Model = _options.Model,
             Messages = BuildOllamaMessages(request),
             Tools = BuildOllamaTools(),
-            Stream = false  // Non-streaming mode to get full response with tool calls
+            Stream = false,  // Non-streaming mode to get full response with tool calls
+            Think = _options.ThinkingEnabled
         };
 
         // Use IOllamaApiClient directly - ChatAsync returns IAsyncEnumerable even with Stream=false
@@ -90,6 +91,14 @@ public sealed class OllamaLlmService : ILlmService
             : new List<ToolCallRequest>();
         
         var rawText = finalResponse?.Message?.Content ?? string.Empty;
+
+        // Prefer the structured Thinking field (OllamaSharp separates it from Content).
+        // If the model still inlines <think> tags in Content, strip them as a fallback.
+        if (!string.IsNullOrEmpty(finalResponse?.Message?.Thinking))
+        {
+            _logger.LogDebug("Thinking content received ({Length} chars) — discarding per policy", 
+                finalResponse!.Message!.Thinking!.Length);
+        }
         var text = StripThinkingContent(rawText);
 
         return new LlmResponse
@@ -100,7 +109,7 @@ public sealed class OllamaLlmService : ILlmService
         };
     }
 
-    public async IAsyncEnumerable<string> StreamChatAsync(
+    public async IAsyncEnumerable<StreamChunk> StreamChatAsync(
         LlmChatRequest request,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
@@ -111,15 +120,16 @@ public sealed class OllamaLlmService : ILlmService
             ModelId = _options.Model,
             Tools = BuildTools()
         };
+        chatOptions.AddOllamaOption(OllamaSharp.Models.OllamaOption.Think, _options.ThinkingEnabled);
 
         var filter = new StreamingThinkingFilter();
         await foreach (var update in _client.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
         {
             if (update.Text is { Length: > 0 } content)
             {
-                foreach (var filtered in filter.ProcessChunk(content))
+                foreach (var chunk in filter.ProcessChunk(content))
                 {
-                    yield return filtered;
+                    yield return chunk;
                 }
             }
         }
@@ -199,7 +209,7 @@ public sealed class OllamaLlmService : ILlmService
         return sb.ToString();
     }
 
-    internal static List<SuggestedQuery> ParseSuggestedQueries(string text)
+    public static List<SuggestedQuery> ParseSuggestedQueries(string text)
     {
         var queries = new List<SuggestedQuery>();
         var codeBlockPattern = new System.Text.RegularExpressions.Regex(
@@ -839,7 +849,8 @@ public sealed class OllamaLlmService : ILlmService
     }
 
     /// <summary>
-    /// Stateful filter for removing <think>...</think> blocks from streaming responses.
+    /// Stateful filter for separating <think>...</think> blocks from streaming responses.
+    /// Yields thinking content as StreamChunk(IsThinking=true) instead of discarding it.
     /// Handles cases where thinking tags span multiple chunks.
     /// </summary>
     private sealed class StreamingThinkingFilter
@@ -847,7 +858,7 @@ public sealed class OllamaLlmService : ILlmService
         private readonly StringBuilder _buffer = new();
         private bool _insideThinking;
 
-        public IEnumerable<string> ProcessChunk(string chunk)
+        public IEnumerable<StreamChunk> ProcessChunk(string chunk)
         {
             _buffer.Append(chunk);
 
@@ -859,11 +870,11 @@ public sealed class OllamaLlmService : ILlmService
                     
                     if (thinkIndex >= 0)
                     {
-                        // Yield everything before <think>
+                        // Yield everything before <think> as text
                         if (thinkIndex > 0)
                         {
                             var output = _buffer.ToString(0, thinkIndex);
-                            yield return output;
+                            yield return new StreamChunk(output, IsThinking: false);
                         }
                         
                         // Remove everything up to and including <think>
@@ -877,10 +888,10 @@ public sealed class OllamaLlmService : ILlmService
                     }
                     else
                     {
-                        // No thinking tag found, yield everything
+                        // No thinking tag found, yield everything as text
                         var output = _buffer.ToString();
                         _buffer.Clear();
-                        yield return output;
+                        yield return new StreamChunk(output, IsThinking: false);
                         yield break;
                     }
                 }
@@ -890,6 +901,13 @@ public sealed class OllamaLlmService : ILlmService
                     
                     if (endIndex >= 0)
                     {
+                        // Yield thinking content before the closing tag
+                        if (endIndex > 0)
+                        {
+                            var thinkContent = _buffer.ToString(0, endIndex);
+                            yield return new StreamChunk(thinkContent, IsThinking: true);
+                        }
+                        
                         // Remove thinking content and closing tag
                         _buffer.Remove(0, endIndex + 8); // 8 = "</think>".Length
                         
@@ -908,7 +926,11 @@ public sealed class OllamaLlmService : ILlmService
                     }
                     else
                     {
-                        // Inside thinking block, discard content and wait for closing tag
+                        // Inside thinking block, yield buffered thinking content and clear
+                        if (_buffer.Length > 0)
+                        {
+                            yield return new StreamChunk(_buffer.ToString(), IsThinking: true);
+                        }
                         _buffer.Clear();
                         yield break;
                     }

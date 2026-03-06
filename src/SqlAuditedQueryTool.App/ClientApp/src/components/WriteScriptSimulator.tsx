@@ -119,6 +119,25 @@ export default function WriteScriptSimulator({ editorHeight, onEditorResize }: W
     return '#ef4444';
   };
 
+  const getOperationType = (): 'UPDATE' | 'INSERT' | 'DELETE' | null => {
+    const trimmed = sql.trim().toUpperCase();
+    if (trimmed.startsWith('UPDATE')) return 'UPDATE';
+    if (trimmed.startsWith('INSERT')) return 'INSERT';
+    if (trimmed.startsWith('DELETE')) return 'DELETE';
+    return null;
+  };
+
+  const formatAffectedRowsText = (count: number | null): string => {
+    if (count === null) return 'Unknown';
+    const operation = getOperationType();
+    const rowWord = count === 1 ? 'row' : 'rows';
+    
+    if (operation === 'UPDATE') return `${count.toLocaleString()} ${rowWord} updated`;
+    if (operation === 'DELETE') return `${count.toLocaleString()} ${rowWord} deleted`;
+    if (operation === 'INSERT') return `${count.toLocaleString()} ${rowWord} inserted`;
+    return `${count.toLocaleString()} ${rowWord} affected`;
+  };
+
   return (
     <>
       <div className="editor-panel write-simulator-editor" style={{ height: `${editorHeight}px` }}>
@@ -201,7 +220,7 @@ export default function WriteScriptSimulator({ editorHeight, onEditorResize }: W
                   className="write-simulator-affected-rows"
                   style={{ color: getAffectedRowsColor(result.estimatedAffectedRows) }}
                 >
-                  {result.estimatedAffectedRows.toLocaleString()}
+                  {formatAffectedRowsText(result.estimatedAffectedRows)}
                 </div>
               </div>
             )}

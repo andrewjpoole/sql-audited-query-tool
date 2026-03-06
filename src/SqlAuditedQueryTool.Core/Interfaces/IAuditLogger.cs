@@ -4,5 +4,5 @@ namespace SqlAuditedQueryTool.Core.Interfaces;
 
 public interface IAuditLogger
 {
-    Task<AuditEntry> LogQueryAsync(QueryRequest request, QueryResult result);
+    Task<AuditEntry> LogQueryAsync(QueryRequest request, QueryResult result, int? gitHubIssueNumber = null, int? azDoWorkItemId = null);
 }

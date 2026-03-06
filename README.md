@@ -12,6 +12,49 @@ A readonly SQL database query application designed for incident investigation, w
 
 ![screenshot](./docs/media/screenshot.png)
 
+## Write Script Simulator
+
+The **Write Script Simulator** tab allows you to safely test UPDATE, INSERT, and DELETE statements without executing them. This is essential in a readonly tool — you can validate write queries, inspect execution plans, and generate deployment scripts before they run against production.
+
+### How It Works
+
+Write queries are **analysed but never executed**. The simulator:
+- Validates SQL syntax and detects forbidden operations (DROP, TRUNCATE, ALTER, CREATE, EXEC)
+- Warns about risky patterns (UPDATE/DELETE without WHERE clauses)
+- Generates execution plans to estimate row impact
+- Shows validation errors and warnings before the query is deployed
+
+### Testing a Write Query
+
+1. Open the **Write Script Simulator** tab
+2. Write your UPDATE, INSERT, or DELETE statement
+3. Press **Ctrl+Enter** or click **Simulate**
+4. Review validation errors, warnings, and estimated affected rows
+5. If valid, optionally click **Create sql-script-runner scripts** to generate versioned deployment scripts
+
+### Configuration
+
+Configure sql-script-runner repositories in `appsettings.json`:
+
+```json
+{
+  "SqlScriptRunner": {
+    "ReposBaseDirectory": "c:\\dev",
+    "Repositories": {
+      "payments": "payments-sql-patches",
+      "tx": "transactions-sql-patches"
+    }
+  }
+}
+```
+
+| Setting | Description |
+|---------|-------------|
+| `ReposBaseDirectory` | Base directory where all script repositories are cloned |
+| `Repositories` | Key-value pairs mapping repository keys to folder names within the base directory |
+
+When you generate scripts, they are created as versioned SQL files (`001_description.sql`, `002_another_change.sql`, etc.) in the target repository, ready for code review and deployment.
+
 ## Architecture
 
 ```
@@ -104,6 +147,8 @@ Ask the chat these questions to explore the sample data and test the query tool:
 
 The local LLM (Ollama with `qwen2.5-coder:7b`) runs significantly faster with GPU acceleration. This requires NVIDIA GPU passthrough from Windows → WSL2 → Docker.
 
+Or if using Podman, follow [this guide](https://wsl-ui.octasoft.co.uk/blog/ollama-gpu-podman-windows)
+
 ### Requirements
 
 - NVIDIA GPU with 8GB+ VRAM (e.g., GeForce RTX 4060/4070/3060 or better)
@@ -165,6 +210,52 @@ You should see your GPU with available memory. The `qwen2.5-coder:7b` model uses
 | `nvidia-container-cli: WSL environment detected but no adapters were found` | WSL kernel too old — update WSL (see Step 1) |
 | Docker `--gpus all` fails with "could not select device driver" | NVIDIA Container Toolkit not installed (see Step 2) or Docker not restarted (Step 3) |
 | GPU visible but model runs on CPU | Ensure `.WithGPUSupport()` is present in `AppHost.cs` on the Ollama resource |
+
+## GitHub Audit Trail Configuration
+
+Every query execution is logged as a comment on a GitHub issue, creating a tamper-evident audit trail with integrity hashes. The issue number is supplied per-request from the UI. Configure the following in `appsettings.json` (or via environment variables / user secrets):
+
+```json
+{
+  "GitHubAudit": {
+    "RepoOwner": "your-org",
+    "RepoName": "your-repo",
+    "Token": "ghp_your_personal_access_token"
+  }
+}
+```
+
+| Setting | Description |
+|---------|-------------|
+| `RepoOwner` | GitHub user or organisation that owns the repository |
+| `RepoName` | Repository where audit comments will be posted |
+| `Token` | GitHub personal access token with `repo` scope (use `dotnet user-secrets` to avoid committing it) |
+
+The **Issue Number** is supplied per-request from the UI (not in config). If no issue number is provided, the audit entry is logged locally only.
+
+If any of the above config values are missing, the application still works — audit entries are logged locally via `ILogger` but not posted to GitHub.
+
+## Azure DevOps Audit Trail Configuration
+
+Audit entries can also be posted as comments on an Azure DevOps work item. Like GitHub, the work item ID is supplied per-request from the UI. Configure the following in `appsettings.json`:
+
+```json
+{
+  "AzDoAudit": {
+    "Organisation": "your-org",
+    "Project": "your-project",
+    "Token": "your-personal-access-token"
+  }
+}
+```
+
+| Setting | Description |
+|---------|-------------|
+| `Organisation` | Azure DevOps organisation name |
+| `Project` | Azure DevOps project name |
+| `Token` | Personal access token with work item read/write scope |
+
+The **Work Item ID** is supplied per-request from the UI. If no work item ID is provided, the AzDO audit step is skipped. Both GitHub and AzDO audit trails can be active simultaneously — each request can target one, both, or neither.
 
 ## Security
 
@@ -229,3 +320,31 @@ LLM: [calls AddContextDirectory] "Directory added. You can now query code from a
 ```
 
 **Tests:** See `tests/SqlAuditedQueryTool.Llm.Tests/Services/CodeContextAssistantTests.cs`
+
+## Sample Investigation Questions
+
+The LLM's strength lies in combining code understanding with database queries. Ask the chat these questions to see how it analyzes business logic and investigates data anomalies in the sample dataset:
+
+### 1. **Code-First Risk Pattern Detection**
+
+> "Are there any deposits that would be flagged as structuring risks by the business rules?"
+
+The LLM reads the Deposit entity to understand the data structure (Amount, Status, ProcessedDate fields), then searches for the characteristic pattern: multiple deposits just under reporting thresholds ($9,000–$9,999) from the same account within a short timeframe. It executes a query to find accounts matching this behavior and reveals the suspicious pattern to you.
+
+### 2. **Business Logic Deep Dive**
+
+> "What conditions would cause an account to fail compliance checks?"
+
+The LLM analyzes the Account and KYC entities to understand the compliance rules encoded in the schema (KYCStatus states like "Pending", "RequiresUpdate", "Verified"). It then queries for accounts violating these rules—such as accounts with "Pending" KYC status that already have completed deposits, or accounts marked "Suspended" with recent transaction activity—exposing inconsistencies in the system.
+
+### 3. **Fee Configuration Anomalies**
+
+> "Which partners have misconfigured fee schedules, and which deposits would be affected?"
+
+The LLM reads the Fee and Partner entities to understand fee validation rules (MinFee should be less than MaxFee, FeePercentage should be positive). It searches the database for partners with inverted ranges (MinFee > MaxFee) or negative fee percentages, then identifies all deposits processed under those misconfigured fee schedules.
+
+### 4. **Cross-Entity Consistency Checks**
+
+> "Show me deposits processed at locations or from partners that shouldn't be accepting deposits."
+
+The LLM examines the Deposit, DepositLocation, and Partner entities to understand valid processing states. It then queries for deposits at Locations in "Maintenance" status, or deposits from accounts belonging to "Suspended" or "Onboarding" partners, revealing operational state mismatches that bypass business controls.

@@ -13,4 +13,5 @@ public sealed class SuggestedQuery
     public required string Sql { get; init; }
     public bool IsReadOnly { get; init; }
     public bool IsFixQuery { get; init; }
+    public List<string> SchemaWarnings { get; set; } = [];
 }

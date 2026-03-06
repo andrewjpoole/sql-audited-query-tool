@@ -11,5 +11,4 @@ public sealed class ScriptGenerationRequest
     public required string Purpose { get; init; }
     public int ExpectedAffectedRows { get; init; }
     public string? RequestedBy { get; init; }
-    public string? DatabaseName { get; init; }
 }

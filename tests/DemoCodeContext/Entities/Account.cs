@@ -48,4 +48,23 @@ public class Account
     public virtual Partner Partner { get; set; } = null!;
 
     public virtual ICollection<Deposit> Deposits { get; set; } = new List<Deposit>();
+
+    // Business logic methods
+
+    /// <summary>
+    /// Detects suspicious frozen accounts with negative balance.
+    /// Seed data: account 42 has this anomaly.
+    /// </summary>
+    public bool IsSuspicious => Status == "Frozen" && Balance < 0;
+
+    /// <summary>
+    /// Detects expired KYC verification (older than 365 days).
+    /// </summary>
+    public bool IsKYCExpired => KYCStatus == "Verified" && KYCVerifiedDate.HasValue && 
+                                (DateTime.UtcNow - KYCVerifiedDate.Value).TotalDays > 365;
+
+    /// <summary>
+    /// Determines if account can accept deposits based on status and KYC verification.
+    /// </summary>
+    public bool CanAcceptDeposits => Status == "Active" && KYCStatus == "Verified";
 }

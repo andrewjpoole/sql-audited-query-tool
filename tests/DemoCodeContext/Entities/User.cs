@@ -42,4 +42,13 @@ public class User
     // Navigation properties
     public virtual ICollection<Deposit> ProcessedDeposits { get; set; } = new List<Deposit>();
     public virtual ICollection<AuditLog> AuditLogs { get; set; } = new List<AuditLog>();
+
+    // Business logic methods
+
+    /// <summary>
+    /// Detects stale inactive users - marked inactive but recently logged in.
+    /// Seed data: tmiller has this anomaly.
+    /// </summary>
+    public bool IsStaleInactive => Status == "Inactive" && LastLoginAt.HasValue && 
+                                    (DateTime.UtcNow - LastLoginAt.Value).TotalDays <= 30;
 }

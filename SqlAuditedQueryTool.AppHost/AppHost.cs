@@ -11,9 +11,13 @@ var db = sql.AddDatabase("db")
     .WithDatabaseSeeding(Path.Combine(builder.AppHostDirectory, "..", "database", "seed.sql"));
 
 var ollama = builder.AddOllama("ollama")
+    .WithBindMount(
+        "C:/certs",
+        "/usr/local/share/ca-certificates"
+    )
     .WithImageTag("0.17.4")
     .WithDataVolume()
-    .WithGPUSupport()
+    .WithGPUSupport(OllamaGpuVendor.Nvidia)
     .WithLifetime(ContainerLifetime.Persistent)
     .WithOpenWebUI();
 

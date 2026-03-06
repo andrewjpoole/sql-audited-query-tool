@@ -9,7 +9,10 @@ public static class AuditServiceCollectionExtensions
     public static IServiceCollection AddAuditServices(
         this IServiceCollection services, IConfiguration configuration)
     {
-        services.AddScoped<IAuditLogger, GitHubAuditLogger>();
+        services.AddHttpClient("AzDoAudit");
+        services.AddSingleton<GitHubAuditLogger>();
+        services.AddSingleton<AzDoAuditLogger>();
+        services.AddScoped<IAuditLogger, CompositeAuditLogger>();
         return services;
     }
 }

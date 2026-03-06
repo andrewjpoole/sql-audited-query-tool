@@ -11,12 +11,11 @@ namespace SqlAuditedQueryTool.Audit;
 /// <summary>
 /// Posts query audit entries as comments on a configured GitHub issue.
 /// </summary>
-public sealed class GitHubAuditLogger : IAuditLogger
+public sealed class GitHubAuditLogger
 {
     private readonly IGitHubClient? _gitHubClient;
     private readonly string? _repoOwner;
     private readonly string? _repoName;
-    private readonly int? _issueNumber;
     private readonly ILogger<GitHubAuditLogger> _logger;
     private readonly bool _isConfigured;
 
@@ -27,76 +26,50 @@ public sealed class GitHubAuditLogger : IAuditLogger
         var section = configuration.GetSection("GitHubAudit");
         _repoOwner = section["RepoOwner"];
         _repoName = section["RepoName"];
-        var issueNumberStr = section["IssueNumber"];
         var token = section["Token"];
 
-        // Check if all required config values are present
+        // Configured if repo credentials are present (issue number comes per-request)
         _isConfigured = !string.IsNullOrEmpty(_repoOwner)
             && !string.IsNullOrEmpty(_repoName)
-            && !string.IsNullOrEmpty(issueNumberStr)
             && !string.IsNullOrEmpty(token);
 
         if (_isConfigured)
         {
-            _issueNumber = int.Parse(issueNumberStr!);
             _gitHubClient = new GitHubClient(new ProductHeaderValue("SqlAuditedQueryTool"))
             {
                 Credentials = new Credentials(token!)
             };
-            _logger.LogInformation("GitHub audit logger configured: {Repo}/{Issue}", $"{_repoOwner}/{_repoName}", _issueNumber);
+            _logger.LogInformation("GitHub audit logger configured: {Repo}", $"{_repoOwner}/{_repoName}");
         }
         else
         {
-            _logger.LogWarning("GitHub audit logger not configured. Audit entries will be logged locally only. Configure GitHubAudit:RepoOwner, GitHubAudit:RepoName, GitHubAudit:IssueNumber, and GitHubAudit:Token to enable GitHub posting.");
+            _logger.LogWarning("GitHub audit logger not configured. Configure GitHubAudit:RepoOwner, GitHubAudit:RepoName, and GitHubAudit:Token to enable GitHub posting.");
         }
     }
 
-    public async Task<AuditEntry> LogQueryAsync(QueryRequest request, QueryResult result)
+    public async Task<string?> PostAuditCommentAsync(AuditEntry entry, int issueNumber)
     {
-        var entry = new AuditEntry
+        if (!_isConfigured || _gitHubClient is null)
         {
-            Sql = request.Sql,
-            RequestedBy = request.RequestedBy,
-            RequestTimestamp = request.Timestamp,
-            RowCount = result.RowCount,
-            ColumnCount = result.ColumnCount,
-            ColumnNames = result.ColumnNames,
-            ExecutionMilliseconds = result.ExecutionMilliseconds,
-            Succeeded = result.Succeeded,
-            ErrorMessage = result.ErrorMessage,
-            ResultTimestamp = result.Timestamp,
-            IntegrityHash = ComputeHash(request, result)
-        };
-
-        // Log locally first
-        _logger.LogInformation("Query audit: User={User}, RowCount={RowCount}, ExecutionMs={Ms}, Succeeded={Success}",
-            entry.RequestedBy, entry.RowCount, entry.ExecutionMilliseconds, entry.Succeeded);
-
-        // Only post to GitHub if configured
-        if (_isConfigured && _gitHubClient is not null)
-        {
-            var markdown = FormatMarkdown(entry);
-
-            try
-            {
-                var comment = await _gitHubClient.Issue.Comment.Create(
-                    _repoOwner!, _repoName!, _issueNumber!.Value, markdown);
-
-                entry.GitHubIssueUrl = comment.HtmlUrl;
-                _logger.LogInformation("Audit logged to GitHub: {Url}", comment.HtmlUrl);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to post audit comment to GitHub issue");
-                // Audit failure should not block the query result
-            }
-        }
-        else
-        {
-            _logger.LogWarning("GitHub not configured — audit entry logged locally only");
+            _logger.LogWarning("GitHub not configured — skipping GitHub audit post");
+            return null;
         }
 
-        return entry;
+        var markdown = FormatMarkdown(entry);
+
+        try
+        {
+            var comment = await _gitHubClient.Issue.Comment.Create(
+                _repoOwner!, _repoName!, issueNumber, markdown);
+
+            _logger.LogInformation("Audit logged to GitHub: {Url}", comment.HtmlUrl);
+            return comment.HtmlUrl;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to post audit comment to GitHub issue");
+            return null;
+        }
     }
 
     private static string FormatMarkdown(AuditEntry entry)

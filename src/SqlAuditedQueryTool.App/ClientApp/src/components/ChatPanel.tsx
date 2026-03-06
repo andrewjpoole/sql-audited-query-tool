@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import type { ChatMessage, QuerySuggestion, QueryResult } from '../api/queryApi';
-import { chat as chatApi } from '../api/queryApi';
+import { chatStream } from '../api/queryApi';
 import type { ChatSession } from '../hooks/useChatHistory';
 import { useHorizontalResize } from '../hooks/useHorizontalResize';
 import { useVerticalResize } from '../hooks/useVerticalResize';
@@ -42,6 +42,8 @@ interface ChatPanelProps {
   onLoadSession: (sessionId: string) => void;
   onDeleteSession: (sessionId: string) => void;
   onUpdateSession: (sessionId: string, messages: ChatMessage[]) => void;
+  gitHubIssueNumber?: number;
+  azDoWorkItemId?: number;
 }
 
 export default function ChatPanel({
@@ -54,15 +56,19 @@ export default function ChatPanel({
   onLoadSession,
   onDeleteSession,
   onUpdateSession,
+  gitHubIssueNumber,
+  azDoWorkItemId,
 }: ChatPanelProps) {
   const [chatsExpanded, setChatsExpanded] = useState(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const [streamStatus, setStreamStatus] = useState<string>('');
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [collapsed, setCollapsed] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const { width, handleMouseDown: handlePanelResize } = useHorizontalResize({
     initialWidth: 360,
@@ -111,31 +117,66 @@ export default function ChatPanel({
     onUpdateSession(sessionId, updated);
     setInput('');
     setLoading(true);
+    setStreamStatus('');
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+
+    let assistantContent = '';
+    let finalSuggestion: QuerySuggestion | undefined;
+    let finalExecutedQuery: string | undefined;
+    let finalExecutedResult: QueryResult | undefined;
 
     try {
-      const resp = await chatApi(text, updated);
+      await chatStream(
+        text,
+        updated,
+        (event) => {
+          if (event.type === 'tool_start') {
+            setStreamStatus(`🔧 ${event.tool === 'execute_sql_query' ? 'Running query...' : 'Executing tool...'}`);
+          } else if (event.type === 'tool_result') {
+            setStreamStatus(event.success ? '✅ Query complete' : '❌ Tool failed');
+            setTimeout(() => setStreamStatus(''), 1000);
+          } else if (event.type === 'text') {
+            assistantContent = event.content || '';
+          } else if (event.type === 'done') {
+            // Collect final data from done event
+            if (event.message) assistantContent = event.message;
+            finalSuggestion = event.suggestion;
+            finalExecutedQuery = event.executedQuery;
+            finalExecutedResult = event.executedResult;
+          }
+        },
+        gitHubIssueNumber,
+        azDoWorkItemId,
+        controller.signal,
+      );
+
+      // Create final assistant message
       const assistantMsg: ChatMessage = {
         role: 'assistant',
-        content: resp.message,
+        content: assistantContent || 'No response',
         timestamp: new Date().toISOString(),
-        suggestion: resp.suggestion,
+        suggestion: finalSuggestion,
       };
       onUpdateSession(sessionId, [...updated, assistantMsg]);
       
       // If AI executed a query, notify parent
-      if (resp.executedQuery && resp.executedResult && onAiExecutedQuery) {
-        onAiExecutedQuery(resp.executedQuery, resp.executedResult);
+      if (finalExecutedQuery && finalExecutedResult && onAiExecutedQuery) {
+        onAiExecutedQuery(finalExecutedQuery, finalExecutedResult);
       }
     } catch (err) {
-      const isTimeout = err instanceof Error && err.message.includes('timed out');
+      const isCancelled = err instanceof Error && err.name === 'AbortError';
       const errorMsg: ChatMessage = {
         role: 'assistant',
-        content: `${isTimeout ? '⏱️ ' : ''}Error: ${err instanceof Error ? err.message : 'Unknown error'}`,
+        content: `Error: ${isCancelled ? 'Request cancelled.' : err instanceof Error ? err.message : 'Unknown error'}`,
         timestamp: new Date().toISOString(),
       };
       onUpdateSession(sessionId, [...updated, errorMsg]);
     } finally {
+      abortControllerRef.current = null;
       setLoading(false);
+      setStreamStatus('');
     }
   };
 
@@ -304,7 +345,17 @@ export default function ChatPanel({
           <div className="chat-bubble chat-bubble--assistant">
             <div className="chat-typing">
               <span /><span /><span />
+              <button
+                className="chat-typing-cancel"
+                onClick={() => abortControllerRef.current?.abort()}
+                title="Cancel request"
+              >
+                ✕
+              </button>
             </div>
+            {streamStatus && (
+              <div className="chat-typing-status">{streamStatus}</div>
+            )}
           </div>
         )}
       </div>
@@ -346,12 +397,24 @@ function SuggestionCard({
   onInsert: (sql: string) => void;
   onInsertAndExecute: (sql: string) => void;
 }) {
+  const warningsBlock = suggestion.schemaWarnings && suggestion.schemaWarnings.length > 0 ? (
+    <div className="suggestion-schema-warnings">
+      <div className="suggestion-schema-warnings-title">⚠️ Schema Validation Warnings</div>
+      <ul>
+        {suggestion.schemaWarnings.map((w, i) => (
+          <li key={i}>{w}</li>
+        ))}
+      </ul>
+    </div>
+  ) : null;
+
   if (suggestion.isFixQuery) {
     return (
       <div className="suggestion suggestion--fix">
         <div className="suggestion-banner">
           ⚠️ FIX QUERY — Must be run in a separate tool with write access
         </div>
+        {warningsBlock}
         <pre className="suggestion-sql">{suggestion.sql}</pre>
         <div className="suggestion-explain">{suggestion.explanation}</div>
         <button
@@ -366,6 +429,7 @@ function SuggestionCard({
 
   return (
     <div className="suggestion suggestion--read">
+      {warningsBlock}
       <pre className="suggestion-sql">{suggestion.sql}</pre>
       <div className="suggestion-explain">{suggestion.explanation}</div>
       <div className="suggestion-actions">

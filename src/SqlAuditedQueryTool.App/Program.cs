@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Microsoft.Extensions.AI;
 using Microsoft.Extensions.Http;
 using Microsoft.Extensions.Options;
@@ -15,25 +16,22 @@ var builder = WebApplication.CreateBuilder(args);
 
 builder.AddServiceDefaults();
 
-// Configure resilience handler timeout AFTER AddServiceDefaults
-// The ServiceDefaults ConfigureHttpClientDefaults already added the resilience handler
-// Now we need to configure its options for ALL HttpClients (including Ollama)
-// This MUST come after AddServiceDefaults but BEFORE AddOllamaApiClient
-builder.Services.ConfigureAll<Microsoft.Extensions.Http.Resilience.HttpStandardResilienceOptions>(options =>
-{
-    // Extend total request timeout to 5 minutes for ALL HttpClients (including Ollama)
-    // This overrides the default 30-second timeout from Aspire's standard resilience handler
-    options.TotalRequestTimeout.Timeout = TimeSpan.FromMinutes(5);
-});
-
 builder.AddOllamaApiClient("ollamaModel");
+
+// Remove Polly resilience (retry, circuit breaker, timeout) from the Ollama chat client.
+// The global resilience handler is added by ServiceDefaults for all HttpClients, but chat
+// requests should not be retried — the user expects to cancel and retry manually.
+// CommunityToolkit.Aspire.OllamaSharp registers the HttpClient as "{connectionName}_httpClient".
+#pragma warning disable EXTEXP0001 // RemoveAllResilienceHandlers is experimental
+builder.Services.AddHttpClient("ollamaModel_httpClient").RemoveAllResilienceHandlers();
+#pragma warning restore EXTEXP0001
 
 // Configure timeout for Ollama HTTP client
 builder.Services.Configure<OllamaOptions>(builder.Configuration.GetSection(OllamaOptions.SectionName));
 builder.Services.AddSingleton<IConfigureOptions<HttpClientFactoryOptions>>(sp =>
 {
     var ollamaOptions = sp.GetRequiredService<IOptions<OllamaOptions>>().Value;
-    return new ConfigureNamedOptions<HttpClientFactoryOptions>("ollamaModel", options =>
+    return new ConfigureNamedOptions<HttpClientFactoryOptions>("ollamaModel_httpClient", options =>
     {
         options.HttpClientActions.Add(client =>
         {
@@ -96,7 +94,7 @@ logger.LogInformation("Environment: {Env}", app.Environment.EnvironmentName);
 // Log timeout configuration for troubleshooting
 var ollamaOptions = app.Services.GetRequiredService<IOptions<OllamaOptions>>().Value;
 logger.LogInformation("Ollama HttpClient Timeout: {Timeout} seconds", ollamaOptions.ChatTimeoutSeconds);
-logger.LogInformation("Resilience Handler Total Request Timeout: 5 minutes (300 seconds)");
+logger.LogInformation("Polly resilience handlers removed from Ollama chat client");
 logger.LogInformation("ASP.NET Request Timeout: 5 minutes (300 seconds)");
 
 app.UseCors();
@@ -229,21 +227,180 @@ app.MapPost("/api/chat", async (
                 : null
         };
 
+        // Common variables used in both streaming and non-streaming paths
+        LlmResponse response;
+        var executedQueries = new List<object>();
+        object? firstSuggestion;
+        object? firstExecutedQuery;
+
         if (request.Stream == true)
         {
             context.Response.ContentType = "text/event-stream";
-            await foreach (var token in llmService.StreamChatAsync(llmRequest, ct))
+            
+            // Streaming with tool calling support
+            response = await llmService.ChatAsync(llmRequest, ct);
+
+            // Tool calling loop with SSE events
+            while (response.ToolCalls.Count > 0)
             {
-                await context.Response.WriteAsync($"data: {token}\n\n", ct);
-                await context.Response.Body.FlushAsync(ct);
+                logger.LogInformation("LLM requested {ToolCallCount} tool calls", response.ToolCalls.Count);
+
+                foreach (var toolCall in response.ToolCalls)
+                {
+                    logger.LogInformation("Executing tool: {ToolName}", toolCall.ToolName);
+                    
+                    // Send tool_start event
+                    var toolStartEvent = JsonSerializer.Serialize(new
+                    {
+                        type = "tool_start",
+                        tool = toolCall.ToolName,
+                        args = toolCall.Arguments
+                    });
+                    await context.Response.WriteAsync($"data: {toolStartEvent}\n\n", ct);
+                    await context.Response.Body.FlushAsync(ct);
+                    
+                    // Special handling for execute_sql_query to capture structured data
+                    if (toolCall.ToolName == "execute_sql_query" && toolCall.Arguments.TryGetValue("sql", out var sqlObj) && sqlObj is string sql)
+                    {
+                        // Execute query through unified pipeline (executor -> audit -> history)
+                        var queryRequest = new QueryRequest
+                        {
+                            Sql = sql,
+                            RequestedBy = "Ollama"
+                        };
+                        
+                        var structuredResult = await executor.ExecuteReadOnlyQueryAsync(queryRequest);
+                        var audit = await auditLogger.LogQueryAsync(queryRequest, structuredResult, request.GitHubIssueNumber, request.AzDoWorkItemId);
+                        
+                        // Save to query history
+                        var historyEntry = new QueryHistory
+                        {
+                            Id = Guid.NewGuid(),
+                            Sql = sql,
+                            RequestedBy = "Ollama",
+                            Source = QuerySource.AI,
+                            RequestTimestamp = queryRequest.Timestamp,
+                            RowCount = structuredResult.RowCount,
+                            ColumnCount = structuredResult.ColumnCount,
+                            ColumnNames = structuredResult.ColumnNames,
+                            ExecutionMilliseconds = structuredResult.ExecutionMilliseconds,
+                            Succeeded = structuredResult.Succeeded,
+                            ErrorMessage = structuredResult.ErrorMessage,
+                            GitHubIssueUrl = audit.GitHubIssueUrl,
+                            AzDoWorkItemUrl = audit.AzDoWorkItemUrl
+                        };
+                        await queryHistoryStore.AddAsync(historyEntry);
+
+                        executedQueries.Add(new
+                        {
+                            historyId = historyEntry.Id,
+                            sql,
+                            rowCount = structuredResult.RowCount,
+                            executionTimeMs = structuredResult.ExecutionMilliseconds,
+                            auditUrl = audit.GitHubIssueUrl,
+                            result = new
+                            {
+                                resultSets = structuredResult.ResultSets.Select(rs => new
+                                {
+                                    columns = rs.ColumnNames.Select(n => new { name = n, type = "unknown" }),
+                                    rows = rs.Rows,
+                                    rowCount = rs.RowCount
+                                }).ToList(),
+                                executionTimeMs = structuredResult.ExecutionMilliseconds
+                            }
+                        });
+                    }
+                    
+                    // Execute tool through LLM service (handles all tools including code context)
+                    var toolResult = await llmService.ExecuteToolCallAsync(toolCall, ct);
+
+                    // Save tool result to chat history
+                    var toolHistoryMsg = new ChatMessageHistory
+                    {
+                        Id = Guid.NewGuid(),
+                        SessionId = session.Id,
+                        Role = "tool",
+                        Content = toolResult,
+                        Timestamp = DateTimeOffset.UtcNow,
+                        ToolCallId = toolCall.ToolCallId,
+                        ToolName = toolCall.ToolName
+                    };
+                    session = await chatHistoryStore.AddMessageAsync(session.Id, toolHistoryMsg);
+
+                    // Send tool_result event
+                    var toolResultEvent = JsonSerializer.Serialize(new
+                    {
+                        type = "tool_result",
+                        tool = toolCall.ToolName,
+                        success = true
+                    });
+                    await context.Response.WriteAsync($"data: {toolResultEvent}\n\n", ct);
+                    await context.Response.Body.FlushAsync(ct);
+
+                    // Add tool result to messages and continue conversation
+                    llmRequest.Messages.Add(new SqlAuditedQueryTool.Core.Models.Llm.ChatMessage
+                    {
+                        Role = "tool",
+                        Content = toolResult
+                    });
+                }
+
+                // Get next response from LLM
+                response = await llmService.ChatAsync(llmRequest, ct);
             }
-            await context.Response.WriteAsync("data: [DONE]\n\n", ct);
+
+            // Save assistant response to history
+            await chatHistoryStore.AddMessageAsync(session.Id, new ChatMessageHistory
+            {
+                Id = Guid.NewGuid(),
+                SessionId = session.Id,
+                Role = "assistant",
+                Content = response.Text,
+                Timestamp = DateTimeOffset.UtcNow
+            });
+
+            // Send text event with final message
+            var textEvent = JsonSerializer.Serialize(new
+            {
+                type = "text",
+                content = response.Text
+            });
+            await context.Response.WriteAsync($"data: {textEvent}\n\n", ct);
+            await context.Response.Body.FlushAsync(ct);
+
+            firstSuggestion = response.SuggestedQueries.FirstOrDefault();
+            firstExecutedQuery = executedQueries.FirstOrDefault();
+
+            // Validate suggested queries against schema if available
+            if (llmRequest.SchemaContext is not null)
+            {
+                foreach (var sq in response.SuggestedQueries)
+                {
+                    sq.SchemaWarnings = SqlAuditedQueryTool.Llm.Services.SqlSchemaValidator.Validate(sq.Sql, llmRequest.SchemaContext);
+                }
+            }
+
+            // Send done event with full structured data
+            var doneEvent = JsonSerializer.Serialize(new
+            {
+                type = "done",
+                sessionId = session.Id,
+                message = response.Text,
+                executedQueries,
+                executedQuery = firstExecutedQuery != null ? ((dynamic)firstExecutedQuery).sql : null,
+                executedResult = firstExecutedQuery != null ? ((dynamic)firstExecutedQuery).result : null,
+                suggestion = firstSuggestion is not null
+                    ? new { sql = ((dynamic)firstSuggestion).Sql, explanation = "", isFixQuery = ((dynamic)firstSuggestion).IsFixQuery, schemaWarnings = ((dynamic)firstSuggestion).SchemaWarnings }
+                    : (object?)null
+            });
+            await context.Response.WriteAsync($"data: {doneEvent}\n\n", ct);
+            await context.Response.Body.FlushAsync(ct);
+            
             return Results.Empty;
         }
 
         // Non-streaming: Handle tool calling loop
-        var response = await llmService.ChatAsync(llmRequest, ct);
-        var executedQueries = new List<object>();
+        response = await llmService.ChatAsync(llmRequest, ct);
 
         // Tool calling loop
         while (response.ToolCalls.Count > 0)
@@ -265,7 +422,7 @@ app.MapPost("/api/chat", async (
                     };
                     
                     var structuredResult = await executor.ExecuteReadOnlyQueryAsync(queryRequest);
-                    var audit = await auditLogger.LogQueryAsync(queryRequest, structuredResult);
+                    var audit = await auditLogger.LogQueryAsync(queryRequest, structuredResult, request.GitHubIssueNumber, request.AzDoWorkItemId);
                     
                     // Save to query history
                     var historyEntry = new QueryHistory
@@ -281,7 +438,8 @@ app.MapPost("/api/chat", async (
                         ExecutionMilliseconds = structuredResult.ExecutionMilliseconds,
                         Succeeded = structuredResult.Succeeded,
                         ErrorMessage = structuredResult.ErrorMessage,
-                        GitHubIssueUrl = audit.GitHubIssueUrl
+                        GitHubIssueUrl = audit.GitHubIssueUrl,
+                        AzDoWorkItemUrl = audit.AzDoWorkItemUrl
                     };
                     await queryHistoryStore.AddAsync(historyEntry);
 
@@ -334,18 +492,26 @@ app.MapPost("/api/chat", async (
         }
 
         // Save assistant response to history
-        var assistantHistoryMsg = new ChatMessageHistory
+        await chatHistoryStore.AddMessageAsync(session.Id, new ChatMessageHistory
         {
             Id = Guid.NewGuid(),
             SessionId = session.Id,
             Role = "assistant",
             Content = response.Text,
             Timestamp = DateTimeOffset.UtcNow
-        };
-        await chatHistoryStore.AddMessageAsync(session.Id, assistantHistoryMsg);
+        });
 
-        var firstSuggestion = response.SuggestedQueries.FirstOrDefault();
-        var firstExecutedQuery = executedQueries.FirstOrDefault();
+        firstSuggestion = response.SuggestedQueries.FirstOrDefault();
+        firstExecutedQuery = executedQueries.FirstOrDefault();
+
+        // Validate suggested queries against schema if available
+        if (llmRequest.SchemaContext is not null)
+        {
+            foreach (var sq in response.SuggestedQueries)
+            {
+                sq.SchemaWarnings = SqlAuditedQueryTool.Llm.Services.SqlSchemaValidator.Validate(sq.Sql, llmRequest.SchemaContext);
+            }
+        }
         
         return Results.Ok(new
         {
@@ -356,7 +522,7 @@ app.MapPost("/api/chat", async (
             executedQuery = firstExecutedQuery != null ? ((dynamic)firstExecutedQuery).sql : null,
             executedResult = firstExecutedQuery != null ? ((dynamic)firstExecutedQuery).result : null,
             suggestion = firstSuggestion is not null
-                ? new { sql = firstSuggestion.Sql, explanation = "", isFixQuery = firstSuggestion.IsFixQuery }
+                ? new { sql = ((dynamic)firstSuggestion).Sql, explanation = "", isFixQuery = ((dynamic)firstSuggestion).IsFixQuery, schemaWarnings = ((dynamic)firstSuggestion).SchemaWarnings }
                 : (object?)null
         });
     }
@@ -431,7 +597,7 @@ app.MapPost("/api/query/execute", async (
             ExecutionPlanMode = request.ExecutionPlanMode ?? ExecutionPlanMode.None
         };
         var result = await executor.ExecuteReadOnlyQueryAsync(queryRequest);
-        var audit = await auditLogger.LogQueryAsync(queryRequest, result);
+        var audit = await auditLogger.LogQueryAsync(queryRequest, result, request.GitHubIssueNumber, request.AzDoWorkItemId);
         
         logger.LogInformation("API: Query executed - {ResultSetCount} result set(s), {TotalRows} total rows, {ExecutionMs}ms, HasPlan={HasPlan}",
             result.ResultSets.Count, result.RowCount, result.ExecutionMilliseconds, result.HasExecutionPlan);
@@ -451,6 +617,7 @@ app.MapPost("/api/query/execute", async (
             Succeeded = result.Succeeded,
             ErrorMessage = result.ErrorMessage,
             GitHubIssueUrl = audit.GitHubIssueUrl,
+            AzDoWorkItemUrl = audit.AzDoWorkItemUrl,
             IncludedExecutionPlan = request.ExecutionPlanMode != null && request.ExecutionPlanMode != ExecutionPlanMode.None
         };
         await historyStore.AddAsync(historyEntry);
@@ -499,6 +666,7 @@ app.MapGet("/api/query/history", async (IQueryHistoryStore historyStore, int? li
         succeeded = h.Succeeded,
         errorMessage = h.ErrorMessage,
         auditUrl = h.GitHubIssueUrl,
+        azDoAuditUrl = h.AzDoWorkItemUrl,
         includedExecutionPlan = h.IncludedExecutionPlan
     }));
 });
@@ -542,8 +710,7 @@ app.MapPost("/api/simulation/generate-scripts", (
         WorkItemId = request.WorkItemId,
         Purpose = request.Purpose,
         ExpectedAffectedRows = request.ExpectedAffectedRows,
-        RequestedBy = "anonymous", // TODO: replace with authenticated user
-        DatabaseName = request.DatabaseName
+        RequestedBy = "anonymous" // TODO: replace with authenticated user
     };
     var result = scriptGeneratorService.GenerateScripts(genRequest);
     
@@ -640,9 +807,9 @@ app.UseWhen(
 app.Run();
 
 // Request DTOs for API endpoints
-record ChatRequest(Guid? SessionId, string? SystemPrompt, List<ChatMessageDto> Messages, bool? Stream, bool? IncludeSchema);
+record ChatRequest(Guid? SessionId, string? SystemPrompt, List<ChatMessageDto> Messages, bool? Stream, bool? IncludeSchema, int? GitHubIssueNumber, int? AzDoWorkItemId);
 record ChatMessageDto(string Role, string Content);
 record QuerySuggestRequest(string NaturalLanguageRequest);
-record ExecuteQueryRequest(string Sql, string? Source, ExecutionPlanMode? ExecutionPlanMode);
+record ExecuteQueryRequest(string Sql, string? Source, ExecutionPlanMode? ExecutionPlanMode, int? GitHubIssueNumber, int? AzDoWorkItemId);
 record SimulateRequest(string Sql);
-record GenerateScriptsRequest(string Sql, string RepositoryKey, int WorkItemId, string Purpose, int ExpectedAffectedRows, string? DatabaseName);
+record GenerateScriptsRequest(string Sql, string RepositoryKey, int WorkItemId, string Purpose, int ExpectedAffectedRows);

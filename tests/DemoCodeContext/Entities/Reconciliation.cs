@@ -41,4 +41,16 @@ public class Reconciliation
 
     [ForeignKey("ReconciledBy")]
     public virtual User? ReconciledByUser { get; set; }
+
+    // Business logic methods
+
+    /// <summary>
+    /// Detects variance between expected and actual amounts.
+    /// </summary>
+    public bool HasVariance => Variance != 0;
+
+    /// <summary>
+    /// Detects unresolved discrepancies - status shows discrepancy but no reconciler assigned.
+    /// </summary>
+    public bool IsUnresolved => Status == "Discrepancy" && ReconciledBy == null;
 }

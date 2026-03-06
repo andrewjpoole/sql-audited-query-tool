@@ -27,6 +27,7 @@ export interface QuerySuggestion {
   sql: string;
   explanation: string;
   isFixQuery: boolean;
+  schemaWarnings?: string[];
 }
 
 export interface ChatMessage {
@@ -41,6 +42,21 @@ export interface LlmResponse {
   suggestion?: QuerySuggestion;
   executedQuery?: string;
   executedResult?: QueryResult;
+}
+
+export interface StreamEvent {
+  type: 'tool_start' | 'tool_result' | 'text' | 'done';
+  content?: string;
+  tool?: string;
+  args?: Record<string, unknown>;
+  success?: boolean;
+  // done event fields
+  sessionId?: string;
+  message?: string;
+  suggestion?: QuerySuggestion;
+  executedQuery?: string;
+  executedResult?: QueryResult;
+  executedQueries?: unknown[];
 }
 
 export interface SchemaColumn {
@@ -109,7 +125,6 @@ export interface ScriptGenerationRequest {
   workItemId: number;
   purpose: string;
   expectedAffectedRows: number;
-  databaseName: string | null;
 }
 
 export interface ScriptGenerationResult {
@@ -135,11 +150,16 @@ async function handleResponse<T>(response: Response): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-export async function executeQuery(sql: string, executionPlanMode: 'None' | 'Estimated' | 'Actual' = 'None'): Promise<QueryResult> {
+export async function executeQuery(
+  sql: string,
+  executionPlanMode: 'None' | 'Estimated' | 'Actual' = 'None',
+  gitHubIssueNumber?: number,
+  azDoWorkItemId?: number,
+): Promise<QueryResult> {
   const response = await fetch('/api/query/execute', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ sql, executionPlanMode }),
+    body: JSON.stringify({ sql, executionPlanMode, gitHubIssueNumber, azDoWorkItemId }),
   });
   const result = await handleResponse<QueryResult>(response);
   
@@ -164,27 +184,82 @@ export async function chat(
   message: string,
   history: ChatMessage[],
   timeoutMs = 180000,
+  gitHubIssueNumber?: number,
+  azDoWorkItemId?: number,
+  signal?: AbortSignal,
 ): Promise<LlmResponse> {
   const messages = [...history.map((m) => ({ role: m.role, content: m.content })), { role: 'user', content: message }];
   
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  // Use caller-provided signal if available, otherwise create internal timeout-only controller
+  const internalController = signal ? null : new AbortController();
+  const effectiveSignal = signal ?? internalController!.signal;
+  const timeoutId = setTimeout(() => {
+    if (internalController) internalController.abort();
+  }, timeoutMs);
   
   try {
     const response = await fetch('/api/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ messages, includeSchema: true }),
-      signal: controller.signal,
+      body: JSON.stringify({ messages, includeSchema: true, gitHubIssueNumber, azDoWorkItemId }),
+      signal: effectiveSignal,
     });
     clearTimeout(timeoutId);
     return handleResponse<LlmResponse>(response);
   } catch (err) {
     clearTimeout(timeoutId);
     if (err instanceof Error && err.name === 'AbortError') {
-      throw new Error('Request timed out. The LLM is taking longer than expected. Please try again or simplify your question.');
+      throw new Error(signal ? 'Request cancelled.' : 'Request timed out. The LLM is taking longer than expected. Please try again or simplify your question.');
     }
     throw err;
+  }
+}
+
+export async function chatStream(
+  message: string,
+  history: ChatMessage[],
+  onEvent: (event: StreamEvent) => void,
+  gitHubIssueNumber?: number,
+  azDoWorkItemId?: number,
+  signal?: AbortSignal,
+): Promise<void> {
+  const messages = [...history.map(m => ({ role: m.role, content: m.content })), { role: 'user', content: message }];
+  
+  const response = await fetch('/api/chat', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ messages, includeSchema: true, stream: true, gitHubIssueNumber, azDoWorkItemId }),
+    signal,
+  });
+  
+  if (!response.ok) {
+    let errorMsg = `Request failed (${response.status})`;
+    try { const body = await response.json(); errorMsg = body.message || errorMsg; } catch {}
+    throw new Error(errorMsg);
+  }
+  
+  const reader = response.body!.getReader();
+  const decoder = new TextDecoder();
+  let buffer = '';
+  
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split('\n');
+    buffer = lines.pop() || '';
+    
+    for (const line of lines) {
+      if (line.startsWith('data: ')) {
+        const data = line.slice(6).trim();
+        if (data === '[DONE]') return;
+        try {
+          const event = JSON.parse(data) as StreamEvent;
+          onEvent(event);
+        } catch { /* skip malformed */ }
+      }
+    }
   }
 }
 

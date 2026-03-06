@@ -17,4 +17,5 @@ public sealed class AuditEntry
     public required DateTimeOffset ResultTimestamp { get; init; }
     public required string IntegrityHash { get; init; }
     public string? GitHubIssueUrl { get; set; }
+    public string? AzDoWorkItemUrl { get; set; }
 }

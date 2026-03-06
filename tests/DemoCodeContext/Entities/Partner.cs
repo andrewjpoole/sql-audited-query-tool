@@ -49,4 +49,28 @@ public class Partner
     // Navigation properties
     public virtual ICollection<Account> Accounts { get; set; } = new List<Account>();
     public virtual ICollection<Fee> Fees { get; set; } = new List<Fee>();
+
+    // Business logic methods
+
+    /// <summary>
+    /// Detects negative fee percentage configuration (anomaly for partner PSB).
+    /// </summary>
+    public bool HasNegativeFees => FeePercentage < 0;
+
+    /// <summary>
+    /// Checks if total deposits exceed the partner's daily limit.
+    /// </summary>
+    /// <param name="totalDepositsToday">Total deposit amount for the current day</param>
+    /// <returns>True if over limit, false otherwise</returns>
+    public bool IsOverDailyLimit(decimal totalDepositsToday)
+    {
+        if (!DailyDepositLimit.HasValue)
+            return false;
+        return totalDepositsToday > DailyDepositLimit.Value;
+    }
+
+    /// <summary>
+    /// Determines if partner is currently active.
+    /// </summary>
+    public bool IsActive => Status == "Active";
 }

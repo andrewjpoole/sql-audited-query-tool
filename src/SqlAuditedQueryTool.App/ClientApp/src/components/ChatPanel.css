@@ -271,6 +271,7 @@
   display: flex;
   gap: 4px;
   padding: 4px 0;
+  align-items: center;
 }
 
 .chat-typing span {
@@ -292,6 +293,13 @@
 @keyframes chat-dot {
   0%, 80%, 100% { opacity: 0.3; }
   40% { opacity: 1; }
+}
+
+.chat-typing-status {
+  font-size: 11px;
+  color: var(--text-secondary);
+  margin-top: 4px;
+  opacity: 0.85;
 }
 
 /* Input area */
@@ -368,6 +376,24 @@
   cursor: default;
 }
 
+.chat-typing-cancel {
+  background: none;
+  border: none;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 2px;
+  margin-left: 4px;
+  opacity: 0.6;
+  border-radius: 2px;
+}
+
+.chat-typing-cancel:hover {
+  opacity: 1;
+  color: #dc2626;
+}
+
 /* SQL Suggestion cards */
 .suggestion {
   margin-top: 8px;
@@ -390,6 +416,29 @@
   font-weight: 600;
   padding: 6px 10px;
   border-bottom: 1px solid rgba(232, 163, 23, 0.3);
+}
+
+.suggestion-schema-warnings {
+  background: rgba(232, 163, 23, 0.1);
+  border-bottom: 1px solid rgba(232, 163, 23, 0.2);
+  padding: 6px 10px;
+  font-size: 11px;
+  color: #e8a317;
+}
+
+.suggestion-schema-warnings-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.suggestion-schema-warnings ul {
+  margin: 0;
+  padding-left: 18px;
+  list-style-type: disc;
+}
+
+.suggestion-schema-warnings li {
+  margin-bottom: 2px;
 }
 
 .suggestion-sql {

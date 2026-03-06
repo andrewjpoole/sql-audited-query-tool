@@ -17,6 +17,10 @@ export default function App() {
   const [sql, setSql] = useState('');
   const [appMode, setAppMode] = useState<'query' | 'simulator'>('query');
 
+  // Audit trail context
+  const [gitHubIssueNumber, setGitHubIssueNumber] = useState<number | undefined>(undefined);
+  const [azDoWorkItemId, setAzDoWorkItemId] = useState<number | undefined>(undefined);
+
   // Query results state - now stored per tab
   const [tabResults, setTabResults] = useState<Record<string, QueryResult | null>>({});
   const [activeTabId, setActiveTabId] = useState<string>('default');
@@ -75,7 +79,7 @@ export default function App() {
     setResultsCollapsed(false);
 
     try {
-      const result = await executeQuery(trimmed, executionPlanMode);
+      const result = await executeQuery(trimmed, executionPlanMode, gitHubIssueNumber, azDoWorkItemId);
       console.log(`Frontend: Received ${result.resultSets?.length || 0} result set(s) from backend`);
       if (result.resultSets?.length) {
         result.resultSets.forEach((rs, idx) => {
@@ -112,7 +116,7 @@ export default function App() {
       setQueryLoading(false);
       executingRef.current = false;
     }
-  }, [sql, executionPlanMode]);
+  }, [sql, executionPlanMode, gitHubIssueNumber, azDoWorkItemId]);
 
   const handleExecuteSelection = useCallback(async (selection: string) => {
     const trimmed = selection.trim();
@@ -127,7 +131,7 @@ export default function App() {
     setResultsCollapsed(false);
 
     try {
-      const result = await executeQuery(trimmed, executionPlanMode);
+      const result = await executeQuery(trimmed, executionPlanMode, gitHubIssueNumber, azDoWorkItemId);
       console.log(`Frontend: Received ${result.resultSets?.length || 0} result set(s) from backend`);
       if (result.resultSets?.length) {
         result.resultSets.forEach((rs, idx) => {
@@ -161,7 +165,7 @@ export default function App() {
       setQueryLoading(false);
       executingRef.current = false;
     }
-  }, [executionPlanMode]);
+  }, [executionPlanMode, gitHubIssueNumber, azDoWorkItemId]);
 
   const handleInsertSql = useCallback((newSql: string) => {
     editorRef.current?.insertTextAtCursor(newSql);
@@ -182,7 +186,7 @@ export default function App() {
         setQueryError(null);
         setResultsCollapsed(false);
         try {
-          const result = await executeQuery(newSql, executionPlanMode);
+          const result = await executeQuery(newSql, executionPlanMode, gitHubIssueNumber, azDoWorkItemId);
           setTabResults((prev) => ({ ...prev, [currentTabId]: result }));
           const totalRows = result.resultSets?.length
             ? result.resultSets.reduce((sum, rs) => sum + rs.rowCount, 0)
@@ -207,7 +211,7 @@ export default function App() {
         }
       });
     },
-    [executionPlanMode],
+    [executionPlanMode, gitHubIssueNumber, azDoWorkItemId],
   );
 
   const handleHistorySelect = useCallback((selectedSql: string) => {
@@ -270,6 +274,25 @@ export default function App() {
         <span className={`app-header-badge ${appMode === 'simulator' ? 'app-header-badge--simulator' : ''}`}>
           {appMode === 'query' ? 'Read-Only' : '⚠️ Simulation'}
         </span>
+        <div className="audit-trail-inputs">
+          <span className="audit-trail-label">Audit:</span>
+          <input
+            type="number"
+            className="audit-trail-input"
+            placeholder="GitHub Issue #"
+            value={gitHubIssueNumber ?? ''}
+            onChange={(e) => setGitHubIssueNumber(e.target.value ? Number(e.target.value) : undefined)}
+            min={1}
+          />
+          <input
+            type="number"
+            className="audit-trail-input"
+            placeholder="AzDO Work Item #"
+            value={azDoWorkItemId ?? ''}
+            onChange={(e) => setAzDoWorkItemId(e.target.value ? Number(e.target.value) : undefined)}
+            min={1}
+          />
+        </div>
         <div className="app-mode-toggle">
           <button 
             className={`mode-btn ${appMode === 'query' ? 'mode-btn--active' : ''}`}
@@ -338,6 +361,8 @@ export default function App() {
             onLoadSession={handleLoadChatSession}
             onDeleteSession={handleDeleteChatSession}
             onUpdateSession={handleUpdateChatSession}
+            gitHubIssueNumber={gitHubIssueNumber}
+            azDoWorkItemId={azDoWorkItemId}
           />
         )}
       </div>

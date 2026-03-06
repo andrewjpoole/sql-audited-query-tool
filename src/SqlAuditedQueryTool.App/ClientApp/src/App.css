@@ -150,3 +150,46 @@ html, body, #root {
 .app-header-badge--simulator {
   background: #d97706;
 }
+
+/* Audit trail inputs */
+.audit-trail-inputs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.audit-trail-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 500;
+  white-space: nowrap;
+}
+
+.audit-trail-input {
+  width: 120px;
+  padding: 3px 8px;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  outline: none;
+  transition: border-color 0.15s;
+  -moz-appearance: textfield;
+}
+
+.audit-trail-input::-webkit-outer-spin-button,
+.audit-trail-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+.audit-trail-input::placeholder {
+  color: var(--text-secondary);
+  opacity: 0.7;
+}
+
+.audit-trail-input:focus {
+  border-color: var(--accent);
+}

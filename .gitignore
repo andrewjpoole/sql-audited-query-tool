@@ -483,3 +483,6 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+# Squad: ignore generated logs (OBSOLETE - now tracking orchestration)
+# .squad/orchestration-log/
+# .squad/log/

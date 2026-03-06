@@ -795,3 +795,10 @@ builder.AddOllamaApiClient("ollamaModel");
 **Files Modified:** src/SqlAuditedQueryTool.App/ClientApp/src/App.tsx, ChatPanel.tsx, ChatPanel.css, WriteScriptSimulator.tsx
 **Impact on other agents:** WriteScriptSimulator now accepts optional `externalSql` prop. ChatPanel requires new props: `appMode` and `onSendToSimulator`.
 **Testing:** npm build passes ✅
+
+### 2026-03-06T13:19:00Z: Simulator Display Simplification — Andrew's Directive
+**By:** Andrew (via Scribe)
+**What:** Remove full execution plan visualization from Write Script Simulator. Display only row count and operation type.
+**Why:** Users only need two pieces of information: (1) how many rows will be affected, (2) what operation type (INSERT/UPDATE/DELETE). Full execution plans are overwhelming for this context.
+**Implementation:** Coordinator removed ExecutionPlanView import and rendering from WriteScriptSimulator.tsx. SimulationResult now displays only estimated row count (color-coded by magnitude) and operation type badge.
+**Status:** ✅ Implemented 2026-03-06T13:19Z. Build passing. No regressions.

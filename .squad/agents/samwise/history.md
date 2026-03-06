@@ -10,6 +10,15 @@
 ## Learnings
 <!-- Append new learnings below this line -->
 
+### 2026-03-06: SQL Comment Stripping to Fix False Validation & Write-Query Detection
+- **Bug:** SQL comments (e.g., `-- Update the Account...`) caused false schema validation warnings and prevented write-query detection when comments preceded the actual statement.
+- **Fix:** Created `SqlHelper.StripSqlComments()` in `src\SqlAuditedQueryTool.Llm\Services\SqlHelper.cs` — uses `GeneratedRegex` to strip `--` and `/* */` comments while preserving string literals.
+- **Applied in 3 places:**
+  - `SqlSchemaValidator.Validate()` — strips comments before `ExtractTableReferences` and `ExtractColumnReferences`
+  - `OllamaLlmService.IsFixQuery()` — strips comments before `StartsWith` checks
+  - `LlmQueryAssistant` line 73 — strips comments before `StartsWith` checks
+- **Pattern:** Comment stripping is shared via static helper to keep DRY. Original SQL preserved for display; only validation/detection uses stripped version.
+
 ### 2026-02-22: Schema Validation Retry Loop for LLM-Generated Queries
 - **Feature:** Modified `/api/chat` endpoint (streaming and non-streaming paths) to automatically retry schema validation failures with the LLM before presenting warnings to the user.
 - **Implementation:**
@@ -27,6 +36,15 @@
 - **UX improvement:** Users see in-progress retry status instead of raw warnings, improving perceived intelligence of the system
 - **Backward compatible:** Remaining warnings after retries still flow to frontend via existing `schemaWarnings` field — SuggestionCard already handles them
 
+
+### 2025-07-24: SQL Comment Stripping to Fix False Validation & ReadOnly Detection
+- **Bug:** SQL comments (e.g., `-- Update the Account...`) caused false schema validation warnings and prevented write-query detection when comments preceded the actual statement.
+- **Fix:** Created `SqlHelper.StripSqlComments()` in `src\SqlAuditedQueryTool.Llm\Services\SqlHelper.cs` — uses `GeneratedRegex` to strip `--` and `/* */` comments while preserving string literals.
+- **Applied in 3 places:**
+  - `SqlSchemaValidator.Validate()` — strips comments before `ExtractTableReferences` and `ExtractColumnReferences`
+  - `OllamaLlmService.IsFixQuery()` — strips comments before `StartsWith` checks
+  - `LlmQueryAssistant` line 73 — strips comments before `StartsWith` checks
+- **Pattern:** Comment stripping is shared via static helper to keep DRY. Original SQL preserved for display; only validation/detection uses stripped version.
 
 ## Foundation Work Summarization
 

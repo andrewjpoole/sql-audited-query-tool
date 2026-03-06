@@ -225,7 +225,7 @@ public sealed class OllamaLlmService : ILlmService
 
     private static bool IsFixQuery(string sql, string fullText, int matchIndex)
     {
-        var sqlUpper = sql.TrimStart().ToUpperInvariant();
+        var sqlUpper = SqlHelper.StripSqlComments(sql).ToUpperInvariant();
         if (sqlUpper.StartsWith("INSERT") || sqlUpper.StartsWith("UPDATE") ||
             sqlUpper.StartsWith("DELETE") || sqlUpper.StartsWith("ALTER") ||
             sqlUpper.StartsWith("DROP") || sqlUpper.StartsWith("CREATE") ||

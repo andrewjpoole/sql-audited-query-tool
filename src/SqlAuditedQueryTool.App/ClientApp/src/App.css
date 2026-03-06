@@ -44,15 +44,6 @@ html, body, #root {
   letter-spacing: 0.3px;
 }
 
-.app-header-badge {
-  font-size: 11px;
-  padding: 2px 8px;
-  border-radius: 3px;
-  background: var(--accent);
-  color: #fff;
-  font-weight: 500;
-}
-
 /* Main three-column layout */
 .main-area {
   flex: 1;
@@ -144,10 +135,6 @@ html, body, #root {
 }
 
 .mode-btn--active.mode-btn--simulator {
-  background: #d97706;
-}
-
-.app-header-badge--simulator {
   background: #d97706;
 }
 

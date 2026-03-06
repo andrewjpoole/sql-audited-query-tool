@@ -1,0 +1,45 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "persistent_name": "Gandalf",
+      "role": "Lead",
+      "universe": "lord-of-the-rings",
+      "created_at": "2026-02-22T12:07:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Samwise",
+      "role": "Backend Dev",
+      "universe": "lord-of-the-rings",
+      "created_at": "2026-02-22T12:07:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Radagast",
+      "role": "LLM Engineer",
+      "universe": "lord-of-the-rings",
+      "created_at": "2026-02-22T12:07:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Legolas",
+      "role": "Frontend Dev",
+      "universe": "lord-of-the-rings",
+      "created_at": "2026-02-22T12:07:00Z",
+      "legacy_named": false,
+      "status": "active"
+    },
+    {
+      "persistent_name": "Faramir",
+      "role": "Security",
+      "universe": "lord-of-the-rings",
+      "created_at": "2026-02-22T12:07:00Z",
+      "legacy_named": false,
+      "status": "active"
+    }
+  ]
+}

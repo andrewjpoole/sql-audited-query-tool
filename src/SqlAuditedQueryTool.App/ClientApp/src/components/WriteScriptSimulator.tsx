@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import Editor, { type OnMount } from '@monaco-editor/react';
 import type * as Monaco from 'monaco-editor';
-import ExecutionPlanView from './ExecutionPlanView';
 import ScriptGeneratorModal from './ScriptGeneratorModal';
 import { simulateQuery } from '../api/queryApi';
 import type { SimulationResult } from '../api/queryApi';
@@ -10,10 +9,18 @@ import './WriteScriptSimulator.css';
 interface WriteScriptSimulatorProps {
   editorHeight: number;
   onEditorResize: (e: React.MouseEvent) => void;
+  externalSql?: string;
 }
 
-export default function WriteScriptSimulator({ editorHeight, onEditorResize }: WriteScriptSimulatorProps) {
+export default function WriteScriptSimulator({ editorHeight, onEditorResize, externalSql }: WriteScriptSimulatorProps) {
   const [sql, setSql] = useState('');
+
+  // Accept SQL injected from outside (e.g. "Send to Simulator" from chat)
+  useEffect(() => {
+    if (externalSql !== undefined && externalSql !== '') {
+      setSql(externalSql);
+    }
+  }, [externalSql]);
   const [simulating, setSimulating] = useState(false);
   const [result, setResult] = useState<SimulationResult | null>(null);
   const [showScriptModal, setShowScriptModal] = useState(false);
@@ -222,13 +229,6 @@ export default function WriteScriptSimulator({ editorHeight, onEditorResize }: W
                 >
                   {formatAffectedRowsText(result.estimatedAffectedRows)}
                 </div>
-              </div>
-            )}
-
-            {result.executionPlanXml && (
-              <div className="write-simulator-section">
-                <h3>📈 Execution Plan</h3>
-                <ExecutionPlanView planXml={result.executionPlanXml} />
               </div>
             )}
 

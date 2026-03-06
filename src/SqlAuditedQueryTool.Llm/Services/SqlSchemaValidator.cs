@@ -21,7 +21,10 @@ public static class SqlSchemaValidator
         var warnings = new List<string>();
         var knownTables = BuildTableLookup(schema);
 
-        var referencedTables = ExtractTableReferences(sql);
+        // Strip comments so regex patterns don't match keywords inside comments
+        var strippedSql = SqlHelper.StripSqlComments(sql);
+
+        var referencedTables = ExtractTableReferences(strippedSql);
         foreach (var tableRef in referencedTables)
         {
             var resolved = ResolveTable(tableRef, knownTables);
@@ -33,7 +36,7 @@ public static class SqlSchemaValidator
             }
         }
 
-        var referencedColumns = ExtractColumnReferences(sql);
+        var referencedColumns = ExtractColumnReferences(strippedSql);
         foreach (var colRef in referencedColumns)
         {
             ValidateColumnReference(colRef, referencedTables, knownTables, warnings);

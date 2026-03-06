@@ -492,8 +492,29 @@
   background: var(--bg-primary);
 }
 
+.suggestion-btn--copy {
+  background: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  min-width: 72px;
+}
+
+.suggestion-btn--copy:hover {
+  background: var(--bg-primary);
+}
+
+.suggestion-btn--simulator {
+  background: rgba(217, 119, 6, 0.15);
+  color: #d97706;
+  border: 1px solid rgba(217, 119, 6, 0.4);
+}
+
+.suggestion-btn--simulator:hover {
+  background: rgba(217, 119, 6, 0.25);
+}
+
 .suggestion--fix .suggestion-btn--insert {
-  margin: 6px 10px 8px;
+  margin: 0;
 }
 
 /* SQL code blocks from chat */

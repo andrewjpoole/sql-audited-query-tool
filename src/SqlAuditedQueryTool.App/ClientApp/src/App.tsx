@@ -16,6 +16,7 @@ import './App.css';
 export default function App() {
   const [sql, setSql] = useState('');
   const [appMode, setAppMode] = useState<'query' | 'simulator'>('query');
+  const [simulatorSql, setSimulatorSql] = useState('');
 
   // Audit trail context
   const [gitHubIssueNumber, setGitHubIssueNumber] = useState<number | undefined>(undefined);
@@ -257,6 +258,11 @@ export default function App() {
     deleteSession(sessionId);
   }, [deleteSession]);
 
+  const handleSendToSimulator = useCallback((fixSql: string) => {
+    setSimulatorSql(fixSql);
+    setAppMode('simulator');
+  }, []);
+
   // Handle tab changes
   const handleActiveTabChange = useCallback((tabId: string) => {
     setActiveTabId(tabId);
@@ -271,9 +277,20 @@ export default function App() {
     <div className="app">
       <header className="app-header">
         <h1>SQL Audited Query Tool</h1>
-        <span className={`app-header-badge ${appMode === 'simulator' ? 'app-header-badge--simulator' : ''}`}>
-          {appMode === 'query' ? 'Read-Only' : '⚠️ Simulation'}
-        </span>
+        <div className="app-mode-toggle">
+          <button 
+            className={`mode-btn ${appMode === 'query' ? 'mode-btn--active' : ''}`}
+            onClick={() => setAppMode('query')}
+          >
+            Read Query
+          </button>
+          <button 
+            className={`mode-btn ${appMode === 'simulator' ? 'mode-btn--active mode-btn--simulator' : ''}`}
+            onClick={() => setAppMode('simulator')}
+          >
+            Write Query Simulator
+          </button>
+        </div>
         <div className="audit-trail-inputs">
           <span className="audit-trail-label">Audit:</span>
           <input
@@ -292,20 +309,6 @@ export default function App() {
             onChange={(e) => setAzDoWorkItemId(e.target.value ? Number(e.target.value) : undefined)}
             min={1}
           />
-        </div>
-        <div className="app-mode-toggle">
-          <button 
-            className={`mode-btn ${appMode === 'query' ? 'mode-btn--active' : ''}`}
-            onClick={() => setAppMode('query')}
-          >
-            Query
-          </button>
-          <button 
-            className={`mode-btn ${appMode === 'simulator' ? 'mode-btn--active mode-btn--simulator' : ''}`}
-            onClick={() => setAppMode('simulator')}
-          >
-            ⚠️ Write Simulator
-          </button>
         </div>
       </header>
 
@@ -346,25 +349,25 @@ export default function App() {
               </div>
             </>
           ) : (
-            <WriteScriptSimulator editorHeight={editorHeight} onEditorResize={handleEditorResize} />
+            <WriteScriptSimulator editorHeight={editorHeight} onEditorResize={handleEditorResize} externalSql={simulatorSql} />
           )}
         </div>
 
-        {appMode === 'query' && (
-          <ChatPanel
-            onInsertSql={handleInsertSql}
-            onInsertAndExecute={handleInsertAndExecute}
-            onAiExecutedQuery={handleAiExecutedQuery}
-            sessions={sessions}
-            currentSessionId={currentSessionId}
-            onNewSession={handleNewChatSession}
-            onLoadSession={handleLoadChatSession}
-            onDeleteSession={handleDeleteChatSession}
-            onUpdateSession={handleUpdateChatSession}
-            gitHubIssueNumber={gitHubIssueNumber}
-            azDoWorkItemId={azDoWorkItemId}
-          />
-        )}
+        <ChatPanel
+          appMode={appMode}
+          onInsertSql={handleInsertSql}
+          onInsertAndExecute={handleInsertAndExecute}
+          onSendToSimulator={handleSendToSimulator}
+          onAiExecutedQuery={handleAiExecutedQuery}
+          sessions={sessions}
+          currentSessionId={currentSessionId}
+          onNewSession={handleNewChatSession}
+          onLoadSession={handleLoadChatSession}
+          onDeleteSession={handleDeleteChatSession}
+          onUpdateSession={handleUpdateChatSession}
+          gitHubIssueNumber={gitHubIssueNumber}
+          azDoWorkItemId={azDoWorkItemId}
+        />
       </div>
     </div>
   );

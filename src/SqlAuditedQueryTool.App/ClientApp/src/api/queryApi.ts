@@ -27,6 +27,7 @@ export interface QuerySuggestion {
   sql: string;
   explanation: string;
   isFixQuery: boolean;
+  isReadOnly?: boolean;
   schemaWarnings?: string[];
 }
 
@@ -45,7 +46,7 @@ export interface LlmResponse {
 }
 
 export interface StreamEvent {
-  type: 'tool_start' | 'tool_result' | 'text' | 'done';
+  type: 'tool_start' | 'tool_result' | 'text' | 'done' | 'schema_retry';
   content?: string;
   tool?: string;
   args?: Record<string, unknown>;
@@ -57,6 +58,9 @@ export interface StreamEvent {
   executedQuery?: string;
   executedResult?: QueryResult;
   executedQueries?: unknown[];
+  // schema_retry event fields
+  attempt?: number;
+  maxAttempts?: number;
 }
 
 export interface SchemaColumn {

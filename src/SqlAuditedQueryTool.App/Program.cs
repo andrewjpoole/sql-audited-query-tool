@@ -371,12 +371,75 @@ app.MapPost("/api/chat", async (
             firstSuggestion = response.SuggestedQueries.FirstOrDefault();
             firstExecutedQuery = executedQueries.FirstOrDefault();
 
-            // Validate suggested queries against schema if available
-            if (llmRequest.SchemaContext is not null)
+            // Validate suggested queries against schema if available, with retry logic
+            if (llmRequest.SchemaContext is not null && response.SuggestedQueries.Count > 0)
             {
-                foreach (var sq in response.SuggestedQueries)
+                const int maxRetries = 2;
+                int retryCount = 0;
+
+                while (retryCount < maxRetries)
                 {
-                    sq.SchemaWarnings = SqlAuditedQueryTool.Llm.Services.SqlSchemaValidator.Validate(sq.Sql, llmRequest.SchemaContext);
+                    // Validate all suggested queries
+                    var hasWarnings = false;
+                    foreach (var sq in response.SuggestedQueries)
+                    {
+                        sq.SchemaWarnings = SqlAuditedQueryTool.Llm.Services.SqlSchemaValidator.Validate(sq.Sql, llmRequest.SchemaContext);
+                        if (sq.SchemaWarnings.Count > 0)
+                        {
+                            hasWarnings = true;
+                        }
+                    }
+
+                    // If no warnings, we're done
+                    if (!hasWarnings) break;
+
+                    retryCount++;
+                    if (retryCount >= maxRetries)
+                    {
+                        // Max retries reached, send warnings to frontend
+                        break;
+                    }
+
+                    // Send schema_retry event to notify frontend
+                    var retryEvent = JsonSerializer.Serialize(new
+                    {
+                        type = "schema_retry",
+                        attempt = retryCount,
+                        maxAttempts = maxRetries
+                    });
+                    await context.Response.WriteAsync($"data: {retryEvent}\n\n", ct);
+                    await context.Response.Body.FlushAsync(ct);
+
+                    // Build feedback message for LLM
+                    var feedbackParts = new List<string>();
+                    foreach (var sq in response.SuggestedQueries.Where(sq => sq.SchemaWarnings.Count > 0))
+                    {
+                        feedbackParts.Add($"Query:\n{sq.Sql}\n\nSchema issues:\n- {string.Join("\n- ", sq.SchemaWarnings)}");
+                    }
+                    var feedbackMessage = $"Your suggested query has schema validation issues:\n\n{string.Join("\n\n", feedbackParts)}\n\nPlease fix the query and suggest a corrected version.";
+
+                    // Add feedback as assistant message (preserving tool call flow)
+                    llmRequest.Messages.Add(new SqlAuditedQueryTool.Core.Models.Llm.ChatMessage
+                    {
+                        Role = "user",
+                        Content = feedbackMessage
+                    });
+
+                    // Request corrected query from LLM
+                    response = await llmService.ChatAsync(llmRequest, ct);
+
+                    // Save assistant response to history
+                    await chatHistoryStore.AddMessageAsync(session.Id, new ChatMessageHistory
+                    {
+                        Id = Guid.NewGuid(),
+                        SessionId = session.Id,
+                        Role = "assistant",
+                        Content = response.Text,
+                        Timestamp = DateTimeOffset.UtcNow
+                    });
+
+                    // Update firstSuggestion for the retry
+                    firstSuggestion = response.SuggestedQueries.FirstOrDefault();
                 }
             }
 
@@ -390,7 +453,7 @@ app.MapPost("/api/chat", async (
                 executedQuery = firstExecutedQuery != null ? ((dynamic)firstExecutedQuery).sql : null,
                 executedResult = firstExecutedQuery != null ? ((dynamic)firstExecutedQuery).result : null,
                 suggestion = firstSuggestion is not null
-                    ? new { sql = ((dynamic)firstSuggestion).Sql, explanation = "", isFixQuery = ((dynamic)firstSuggestion).IsFixQuery, schemaWarnings = ((dynamic)firstSuggestion).SchemaWarnings }
+                    ? new { sql = ((dynamic)firstSuggestion).Sql, explanation = "", isFixQuery = ((dynamic)firstSuggestion).IsFixQuery, schemaWarnings = ((dynamic)firstSuggestion).SchemaWarnings, isReadOnly = ((dynamic)firstSuggestion).IsReadOnly }
                     : (object?)null
             });
             await context.Response.WriteAsync($"data: {doneEvent}\n\n", ct);
@@ -504,12 +567,65 @@ app.MapPost("/api/chat", async (
         firstSuggestion = response.SuggestedQueries.FirstOrDefault();
         firstExecutedQuery = executedQueries.FirstOrDefault();
 
-        // Validate suggested queries against schema if available
-        if (llmRequest.SchemaContext is not null)
+        // Validate suggested queries against schema if available, with retry logic
+        if (llmRequest.SchemaContext is not null && response.SuggestedQueries.Count > 0)
         {
-            foreach (var sq in response.SuggestedQueries)
+            const int maxRetries = 2;
+            int retryCount = 0;
+
+            while (retryCount < maxRetries)
             {
-                sq.SchemaWarnings = SqlAuditedQueryTool.Llm.Services.SqlSchemaValidator.Validate(sq.Sql, llmRequest.SchemaContext);
+                // Validate all suggested queries
+                var hasWarnings = false;
+                foreach (var sq in response.SuggestedQueries)
+                {
+                    sq.SchemaWarnings = SqlAuditedQueryTool.Llm.Services.SqlSchemaValidator.Validate(sq.Sql, llmRequest.SchemaContext);
+                    if (sq.SchemaWarnings.Count > 0)
+                    {
+                        hasWarnings = true;
+                    }
+                }
+
+                // If no warnings, we're done
+                if (!hasWarnings) break;
+
+                retryCount++;
+                if (retryCount >= maxRetries)
+                {
+                    // Max retries reached, send warnings in response
+                    break;
+                }
+
+                // Build feedback message for LLM
+                var feedbackParts = new List<string>();
+                foreach (var sq in response.SuggestedQueries.Where(sq => sq.SchemaWarnings.Count > 0))
+                {
+                    feedbackParts.Add($"Query:\n{sq.Sql}\n\nSchema issues:\n- {string.Join("\n- ", sq.SchemaWarnings)}");
+                }
+                var feedbackMessage = $"Your suggested query has schema validation issues:\n\n{string.Join("\n\n", feedbackParts)}\n\nPlease fix the query and suggest a corrected version.";
+
+                // Add feedback as user message
+                llmRequest.Messages.Add(new SqlAuditedQueryTool.Core.Models.Llm.ChatMessage
+                {
+                    Role = "user",
+                    Content = feedbackMessage
+                });
+
+                // Request corrected query from LLM
+                response = await llmService.ChatAsync(llmRequest, ct);
+
+                // Save assistant response to history
+                await chatHistoryStore.AddMessageAsync(session.Id, new ChatMessageHistory
+                {
+                    Id = Guid.NewGuid(),
+                    SessionId = session.Id,
+                    Role = "assistant",
+                    Content = response.Text,
+                    Timestamp = DateTimeOffset.UtcNow
+                });
+
+                // Update firstSuggestion for the retry
+                firstSuggestion = response.SuggestedQueries.FirstOrDefault();
             }
         }
         
@@ -522,7 +638,7 @@ app.MapPost("/api/chat", async (
             executedQuery = firstExecutedQuery != null ? ((dynamic)firstExecutedQuery).sql : null,
             executedResult = firstExecutedQuery != null ? ((dynamic)firstExecutedQuery).result : null,
             suggestion = firstSuggestion is not null
-                ? new { sql = ((dynamic)firstSuggestion).Sql, explanation = "", isFixQuery = ((dynamic)firstSuggestion).IsFixQuery, schemaWarnings = ((dynamic)firstSuggestion).SchemaWarnings }
+                ? new { sql = ((dynamic)firstSuggestion).Sql, explanation = "", isFixQuery = ((dynamic)firstSuggestion).IsFixQuery, schemaWarnings = ((dynamic)firstSuggestion).SchemaWarnings, isReadOnly = ((dynamic)firstSuggestion).IsReadOnly }
                 : (object?)null
         });
     }

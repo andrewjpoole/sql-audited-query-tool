@@ -17,6 +17,11 @@ function extractSqlBlocks(text: string): string[] {
   return matches;
 }
 
+// Strip SQL code blocks from text when a suggestion card will show the same SQL
+function stripSqlCodeBlocks(text: string): string {
+  return text.replace(/```sql\n[\s\S]*?```/gi, '').trim();
+}
+
 function formatTimestamp(iso: string): string {
   const date = new Date(iso);
   const now = new Date();
@@ -33,8 +38,10 @@ function formatTimestamp(iso: string): string {
 }
 
 interface ChatPanelProps {
+  appMode: 'query' | 'simulator';
   onInsertSql: (sql: string) => void;
   onInsertAndExecute: (sql: string) => void;
+  onSendToSimulator: (sql: string) => void;
   onAiExecutedQuery?: (sql: string, result: QueryResult) => void;
   sessions: ChatSession[];
   currentSessionId: string | null;
@@ -47,8 +54,10 @@ interface ChatPanelProps {
 }
 
 export default function ChatPanel({
+  appMode,
   onInsertSql,
   onInsertAndExecute,
+  onSendToSimulator,
   onAiExecutedQuery,
   sessions,
   currentSessionId,
@@ -137,6 +146,8 @@ export default function ChatPanel({
           } else if (event.type === 'tool_result') {
             setStreamStatus(event.success ? '✅ Query complete' : '❌ Tool failed');
             setTimeout(() => setStreamStatus(''), 1000);
+          } else if (event.type === 'schema_retry') {
+            setStreamStatus(`🔄 Fixing schema issues (attempt ${event.attempt}/${event.maxAttempts})...`);
           } else if (event.type === 'text') {
             assistantContent = event.content || '';
           } else if (event.type === 'done') {
@@ -312,15 +323,21 @@ export default function ChatPanel({
           </div>
         )}
         {messages.map((msg, i) => {
-          const sqlBlocks = msg.role === 'assistant' ? extractSqlBlocks(msg.content) : [];
+          const hasSuggestion = !!msg.suggestion;
+          const displayContent = msg.role === 'assistant' && hasSuggestion
+            ? stripSqlCodeBlocks(msg.content)
+            : msg.content;
+          const sqlBlocks = msg.role === 'assistant' && !hasSuggestion ? extractSqlBlocks(msg.content) : [];
           return (
             <div key={i} className={`chat-bubble chat-bubble--${msg.role}`}>
-              <div className="chat-bubble-content">{msg.content}</div>
+              {displayContent && <div className="chat-bubble-content">{displayContent}</div>}
               {msg.suggestion && (
                 <SuggestionCard
                   suggestion={msg.suggestion}
                   onInsert={onInsertSql}
                   onInsertAndExecute={onInsertAndExecute}
+                  onSendToSimulator={onSendToSimulator}
+                  appMode={appMode}
                 />
               )}
               {sqlBlocks.map((sqlBlock, idx) => (
@@ -392,11 +409,27 @@ function SuggestionCard({
   suggestion,
   onInsert,
   onInsertAndExecute,
+  onSendToSimulator,
+  appMode,
 }: {
   suggestion: QuerySuggestion;
   onInsert: (sql: string) => void;
   onInsertAndExecute: (sql: string) => void;
+  onSendToSimulator: (sql: string) => void;
+  appMode: 'query' | 'simulator';
 }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(suggestion.sql);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback: select-copy not needed in modern browsers
+    }
+  };
+
   const warningsBlock = suggestion.schemaWarnings && suggestion.schemaWarnings.length > 0 ? (
     <div className="suggestion-schema-warnings">
       <div className="suggestion-schema-warnings-title">⚠️ Schema Validation Warnings</div>
@@ -417,12 +450,26 @@ function SuggestionCard({
         {warningsBlock}
         <pre className="suggestion-sql">{suggestion.sql}</pre>
         <div className="suggestion-explain">{suggestion.explanation}</div>
-        <button
-          className="suggestion-btn suggestion-btn--insert"
-          onClick={() => onInsert(suggestion.sql)}
-        >
-          Insert into Editor
-        </button>
+        <div className="suggestion-actions">
+          <button
+            className="suggestion-btn suggestion-btn--copy"
+            onClick={handleCopy}
+          >
+            {copied ? '✅ Copied!' : '📋 Copy'}
+          </button>
+          <button
+            className="suggestion-btn suggestion-btn--simulator"
+            onClick={() => onSendToSimulator(suggestion.sql)}
+          >
+            🔬 Send to Simulator
+          </button>
+          <button
+            className="suggestion-btn suggestion-btn--insert"
+            onClick={() => onInsert(suggestion.sql)}
+          >
+            Insert into Editor
+          </button>
+        </div>
       </div>
     );
   }
@@ -434,11 +481,27 @@ function SuggestionCard({
       <div className="suggestion-explain">{suggestion.explanation}</div>
       <div className="suggestion-actions">
         <button
-          className="suggestion-btn suggestion-btn--execute"
-          onClick={() => onInsertAndExecute(suggestion.sql)}
+          className="suggestion-btn suggestion-btn--copy"
+          onClick={handleCopy}
         >
-          ▶ Insert &amp; Execute
+          {copied ? '✅ Copied!' : '📋 Copy'}
         </button>
+        {appMode === 'query' && suggestion.isReadOnly !== false && (
+          <button
+            className="suggestion-btn suggestion-btn--execute"
+            onClick={() => onInsertAndExecute(suggestion.sql)}
+          >
+            ▶ Insert &amp; Execute
+          </button>
+        )}
+        {suggestion.isReadOnly === false && (
+          <button
+            className="suggestion-btn suggestion-btn--simulator"
+            onClick={() => onSendToSimulator(suggestion.sql)}
+          >
+            🔬 Run in Simulator
+          </button>
+        )}
         <button
           className="suggestion-btn suggestion-btn--insert"
           onClick={() => onInsert(suggestion.sql)}

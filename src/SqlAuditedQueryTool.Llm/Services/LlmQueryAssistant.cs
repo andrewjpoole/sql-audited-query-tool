@@ -70,7 +70,7 @@ public sealed class LlmQueryAssistant : IQueryAssistant
 
         if (!string.IsNullOrEmpty(sql))
         {
-            var sqlUpper = sql.TrimStart().ToUpperInvariant();
+            var sqlUpper = SqlHelper.StripSqlComments(sql).ToUpperInvariant();
             isFixQuery = sqlUpper.StartsWith("INSERT") || sqlUpper.StartsWith("UPDATE") ||
                          sqlUpper.StartsWith("DELETE") || sqlUpper.StartsWith("ALTER") ||
                          sqlUpper.StartsWith("DROP") || sqlUpper.StartsWith("CREATE") ||

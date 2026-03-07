@@ -46,7 +46,7 @@ export interface LlmResponse {
 }
 
 export interface StreamEvent {
-  type: 'tool_start' | 'tool_result' | 'text' | 'done' | 'schema_retry';
+  type: 'tool_start' | 'tool_result' | 'text' | 'thinking' | 'done' | 'schema_retry';
   content?: string;
   tool?: string;
   args?: Record<string, unknown>;

@@ -1,4 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { ChatMessage, QuerySuggestion, QueryResult } from '../api/queryApi';
 import { chatStream } from '../api/queryApi';
 import type { ChatSession } from '../hooks/useChatHistory';
@@ -72,6 +74,10 @@ export default function ChatPanel({
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [streamStatus, setStreamStatus] = useState<string>('');
+  const [streamingText, setStreamingText] = useState('');
+  const [thinkingContent, setThinkingContent] = useState('');
+  const [isThinking, setIsThinking] = useState(false);
+  const [thinkingCollapsed, setThinkingCollapsed] = useState(false);
   const [inputHistory, setInputHistory] = useState<string[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [collapsed, setCollapsed] = useState(false);
@@ -103,7 +109,7 @@ export default function ChatPanel({
     if (listRef.current) {
       listRef.current.scrollTop = listRef.current.scrollHeight;
     }
-  }, [messages]);
+  }, [messages, streamingText, thinkingContent]);
 
   const handleSend = async () => {
     const text = input.trim();
@@ -132,9 +138,15 @@ export default function ChatPanel({
     abortControllerRef.current = controller;
 
     let assistantContent = '';
+    let thinkingAccumulator = '';
     let finalSuggestion: QuerySuggestion | undefined;
     let finalExecutedQuery: string | undefined;
     let finalExecutedResult: QueryResult | undefined;
+
+    setStreamingText('');
+    setThinkingContent('');
+    setIsThinking(false);
+    setThinkingCollapsed(false);
 
     try {
       await chatStream(
@@ -148,10 +160,19 @@ export default function ChatPanel({
             setTimeout(() => setStreamStatus(''), 1000);
           } else if (event.type === 'schema_retry') {
             setStreamStatus(`🔄 Fixing schema issues (attempt ${event.attempt}/${event.maxAttempts})...`);
+          } else if (event.type === 'thinking') {
+            thinkingAccumulator += event.content || '';
+            setThinkingContent(thinkingAccumulator);
+            setIsThinking(true);
           } else if (event.type === 'text') {
-            assistantContent = event.content || '';
+            // First text event collapses thinking
+            if (thinkingAccumulator && !thinkingCollapsed) {
+              setIsThinking(false);
+              setThinkingCollapsed(true);
+            }
+            assistantContent += event.content || '';
+            setStreamingText(assistantContent);
           } else if (event.type === 'done') {
-            // Collect final data from done event
             if (event.message) assistantContent = event.message;
             finalSuggestion = event.suggestion;
             finalExecutedQuery = event.executedQuery;
@@ -188,6 +209,10 @@ export default function ChatPanel({
       abortControllerRef.current = null;
       setLoading(false);
       setStreamStatus('');
+      setStreamingText('');
+      setThinkingContent('');
+      setIsThinking(false);
+      setThinkingCollapsed(false);
     }
   };
 
@@ -330,7 +355,15 @@ export default function ChatPanel({
           const sqlBlocks = msg.role === 'assistant' && !hasSuggestion ? extractSqlBlocks(msg.content) : [];
           return (
             <div key={i} className={`chat-bubble chat-bubble--${msg.role}`}>
-              {displayContent && <div className="chat-bubble-content">{displayContent}</div>}
+              {displayContent && (
+                <div className="chat-bubble-content">
+                  {msg.role === 'assistant' ? (
+                    <ReactMarkdown remarkPlugins={[remarkGfm]}>{displayContent}</ReactMarkdown>
+                  ) : (
+                    displayContent
+                  )}
+                </div>
+              )}
               {msg.suggestion && (
                 <SuggestionCard
                   suggestion={msg.suggestion}
@@ -360,19 +393,48 @@ export default function ChatPanel({
         })}
         {loading && (
           <div className="chat-bubble chat-bubble--assistant">
-            <div className="chat-typing">
-              <span /><span /><span />
+            {/* Thinking section */}
+            {thinkingContent && (
+              <div className="chat-thinking-section">
+                {isThinking ? (
+                  <details open className="chat-thinking-details">
+                    <summary className="chat-thinking-summary">
+                      <span className="chat-thinking-indicator">💭 Thinking<span className="chat-thinking-dots" /></span>
+                    </summary>
+                    <div className="chat-thinking-text">{thinkingContent}</div>
+                  </details>
+                ) : (
+                  <details className="chat-thinking-details">
+                    <summary className="chat-thinking-summary">
+                      💭 Reasoning ({thinkingContent.length} chars — click to expand)
+                    </summary>
+                    <div className="chat-thinking-text">{thinkingContent}</div>
+                  </details>
+                )}
+              </div>
+            )}
+            {/* Streaming response text */}
+            {streamingText ? (
+              <div className="chat-bubble-content">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>{streamingText}</ReactMarkdown>
+              </div>
+            ) : !thinkingContent ? (
+              <div className="chat-typing">
+                <span /><span /><span />
+              </div>
+            ) : null}
+            <div className="chat-typing-actions">
+              {streamStatus && (
+                <div className="chat-typing-status">{streamStatus}</div>
+              )}
               <button
                 className="chat-typing-cancel"
                 onClick={() => abortControllerRef.current?.abort()}
                 title="Cancel request"
               >
-                ✕
+                ✕ Cancel
               </button>
             </div>
-            {streamStatus && (
-              <div className="chat-typing-status">{streamStatus}</div>
-            )}
           </div>
         )}
       </div>

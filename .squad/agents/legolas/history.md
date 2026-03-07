@@ -131,3 +131,28 @@ This section consolidates early foundational work before recent focused features
 - **Pattern:** `isReadOnly !== false` (true or undefined) preserves backward compatibility — old responses without the field still get Insert & Execute
 - **Files touched:** Program.cs (2 serialization sites), queryApi.ts, ChatPanel.tsx
 - **Build status:** npm build ✅, dotnet build ✅
+
+### 2026-07-24: SSE Streaming & Thinking Content Display
+- **Change:** Real-time streaming of LLM response text and thinking/reasoning content
+- **New SSE events handled:** `thinking` (model reasoning chunks) and `text` (now accumulated incrementally instead of replaced)
+- **StreamEvent type:** Added `thinking` to union in queryApi.ts
+- **Streaming text:** `text` events now append to `assistantContent` accumulator; `streamingText` state updates progressively so user sees text appear chunk-by-chunk
+- **Thinking UI:** Collapsible `<details>` section with 💭 indicator, animated dots while thinking, auto-collapses when first `text` event arrives, expandable afterward with character count summary
+- **Thinking style:** Monospace font, dimmed color, subtle gray background, smooth expand/collapse CSS transition
+- **State variables added:** `streamingText`, `thinkingContent`, `isThinking`, `thinkingCollapsed`
+- **Auto-scroll:** `useEffect` scroll dependency now includes `streamingText` and `thinkingContent`
+- **Pattern:** Accumulate in local variable + batch setState for streaming; avoids stale closure issues
+- **Files touched:** ChatPanel.tsx, ChatPanel.css, queryApi.ts
+- **Build status:** npm build ✅
+
+### 2026-07-24: Markdown Rendering in Chat Messages
+- **Change:** LLM assistant messages now render as rich markdown instead of plain text
+- **Dependencies added:** `react-markdown` + `remark-gfm` (GitHub-flavored markdown: tables, strikethrough, etc.)
+- **Implementation:** Wrapped assistant `displayContent` and `streamingText` in `<ReactMarkdown remarkPlugins={[remarkGfm]}>` in ChatPanel.tsx
+- **User messages:** Still render as plain text (no markdown processing)
+- **Thinking content:** Still plain text as designed (internal reasoning)
+- **SuggestionCard:** Untouched — still renders separately below markdown content
+- **CSS additions:** Full markdown styling scoped to `.chat-bubble--assistant .chat-bubble-content` — headings (h1-h4), inline code, code blocks (pre/code), lists (ul/ol), blockquotes, tables, links, hr, strong
+- **Code block styling:** Monospace font, `var(--bg-primary)` background, border, proper overflow handling
+- **Files touched:** ChatPanel.tsx (import + 2 render sites), ChatPanel.css (markdown styles), package.json (new deps)
+- **Build status:** npm build ✅

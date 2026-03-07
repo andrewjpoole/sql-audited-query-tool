@@ -125,6 +125,18 @@ public sealed class OllamaLlmService : ILlmService
         var filter = new StreamingThinkingFilter();
         await foreach (var update in _client.GetStreamingResponseAsync(messages, chatOptions, cancellationToken: cancellationToken))
         {
+            // Check for thinking content via M.E.AI's TextReasoningContent
+            // OllamaSharp maps the Ollama `thinking` field to TextReasoningContent in Contents
+            foreach (var item in update.Contents)
+            {
+                if (item is Microsoft.Extensions.AI.TextReasoningContent reasoning 
+                    && reasoning.Text is { Length: > 0 } thinkingText)
+                {
+                    yield return new StreamChunk(thinkingText, IsThinking: true);
+                }
+            }
+
+            // Check for regular text content (also handles inline <think> tags as fallback)
             if (update.Text is { Length: > 0 } content)
             {
                 foreach (var chunk in filter.ProcessChunk(content))

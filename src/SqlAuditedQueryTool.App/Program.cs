@@ -237,142 +237,156 @@ app.MapPost("/api/chat", async (
         if (request.Stream == true)
         {
             context.Response.ContentType = "text/event-stream";
-            
-            // Phase 1: Handle tool calling with non-streaming ChatAsync
-            // Tool calls require the full response to detect, so we use ChatAsync here
-            response = await llmService.ChatAsync(llmRequest, ct);
 
-            while (response.ToolCalls.Count > 0)
+            // Helper: stream text/thinking chunks via SSE, returns accumulated text
+            async Task<string> StreamResponseAsync()
             {
-                logger.LogInformation("LLM requested {ToolCallCount} tool calls", response.ToolCalls.Count);
-
-                foreach (var toolCall in response.ToolCalls)
+                var textBuilder = new StringBuilder();
+                await foreach (var chunk in llmService.StreamChatAsync(llmRequest, ct))
                 {
-                    logger.LogInformation("Executing tool: {ToolName}", toolCall.ToolName);
-                    
-                    // Send tool_start event
-                    var toolStartEvent = JsonSerializer.Serialize(new
+                    var eventType = chunk.IsThinking ? "thinking" : "text";
+                    var sseEvent = JsonSerializer.Serialize(new
                     {
-                        type = "tool_start",
-                        tool = toolCall.ToolName,
-                        args = toolCall.Arguments
+                        type = eventType,
+                        content = chunk.Content
                     });
-                    await context.Response.WriteAsync($"data: {toolStartEvent}\n\n", ct);
+                    await context.Response.WriteAsync($"data: {sseEvent}\n\n", ct);
                     await context.Response.Body.FlushAsync(ct);
-                    
-                    // Special handling for execute_sql_query to capture structured data
-                    if (toolCall.ToolName == "execute_sql_query" && toolCall.Arguments.TryGetValue("sql", out var sqlObj) && sqlObj is string sql)
+
+                    if (!chunk.IsThinking)
+                        textBuilder.Append(chunk.Content);
+                }
+                return textBuilder.ToString();
+            }
+
+            // Phase 1: Try streaming first — gives the user immediate liveness
+            // StreamChatAsync passes tools to the model but only yields text chunks.
+            // With Ollama, tool calls and text are mutually exclusive per response:
+            // if the model wants tools, no text is streamed; if it generates text, no tools.
+            var streamedText = await StreamResponseAsync();
+
+            // Phase 2: If no text was streamed, the model likely wants tool calls.
+            // Fall back to non-streaming ChatAsync to detect and execute tool calls.
+            if (string.IsNullOrEmpty(streamedText))
+            {
+                response = await llmService.ChatAsync(llmRequest, ct);
+
+                while (response.ToolCalls.Count > 0)
+                {
+                    logger.LogInformation("LLM requested {ToolCallCount} tool calls", response.ToolCalls.Count);
+
+                    foreach (var toolCall in response.ToolCalls)
                     {
-                        // Execute query through unified pipeline (executor -> audit -> history)
-                        var queryRequest = new QueryRequest
+                        logger.LogInformation("Executing tool: {ToolName}", toolCall.ToolName);
+                        
+                        // Send tool_start event
+                        var toolStartEvent = JsonSerializer.Serialize(new
                         {
-                            Sql = sql,
-                            RequestedBy = "Ollama"
-                        };
+                            type = "tool_start",
+                            tool = toolCall.ToolName,
+                            args = toolCall.Arguments
+                        });
+                        await context.Response.WriteAsync($"data: {toolStartEvent}\n\n", ct);
+                        await context.Response.Body.FlushAsync(ct);
                         
-                        var structuredResult = await executor.ExecuteReadOnlyQueryAsync(queryRequest);
-                        var audit = await auditLogger.LogQueryAsync(queryRequest, structuredResult, request.GitHubIssueNumber, request.AzDoWorkItemId);
+                        // Special handling for execute_sql_query to capture structured data
+                        if (toolCall.ToolName == "execute_sql_query" && toolCall.Arguments.TryGetValue("sql", out var sqlObj) && sqlObj is string sql)
+                        {
+                            var queryRequest = new QueryRequest
+                            {
+                                Sql = sql,
+                                RequestedBy = "Ollama"
+                            };
+                            
+                            var structuredResult = await executor.ExecuteReadOnlyQueryAsync(queryRequest);
+                            var audit = await auditLogger.LogQueryAsync(queryRequest, structuredResult, request.GitHubIssueNumber, request.AzDoWorkItemId);
+                            
+                            var historyEntry = new QueryHistory
+                            {
+                                Id = Guid.NewGuid(),
+                                Sql = sql,
+                                RequestedBy = "Ollama",
+                                Source = QuerySource.AI,
+                                RequestTimestamp = queryRequest.Timestamp,
+                                RowCount = structuredResult.RowCount,
+                                ColumnCount = structuredResult.ColumnCount,
+                                ColumnNames = structuredResult.ColumnNames,
+                                ExecutionMilliseconds = structuredResult.ExecutionMilliseconds,
+                                Succeeded = structuredResult.Succeeded,
+                                ErrorMessage = structuredResult.ErrorMessage,
+                                GitHubIssueUrl = audit.GitHubIssueUrl,
+                                AzDoWorkItemUrl = audit.AzDoWorkItemUrl
+                            };
+                            await queryHistoryStore.AddAsync(historyEntry);
+
+                            executedQueries.Add(new
+                            {
+                                historyId = historyEntry.Id,
+                                sql,
+                                rowCount = structuredResult.RowCount,
+                                executionTimeMs = structuredResult.ExecutionMilliseconds,
+                                auditUrl = audit.GitHubIssueUrl,
+                                result = new
+                                {
+                                    resultSets = structuredResult.ResultSets.Select(rs => new
+                                    {
+                                        columns = rs.ColumnNames.Select(n => new { name = n, type = "unknown" }),
+                                        rows = rs.Rows,
+                                        rowCount = rs.RowCount
+                                    }).ToList(),
+                                    executionTimeMs = structuredResult.ExecutionMilliseconds
+                                }
+                            });
+                        }
                         
-                        // Save to query history
-                        var historyEntry = new QueryHistory
+                        var toolResult = await llmService.ExecuteToolCallAsync(toolCall, ct);
+
+                        var toolHistoryMsg = new ChatMessageHistory
                         {
                             Id = Guid.NewGuid(),
-                            Sql = sql,
-                            RequestedBy = "Ollama",
-                            Source = QuerySource.AI,
-                            RequestTimestamp = queryRequest.Timestamp,
-                            RowCount = structuredResult.RowCount,
-                            ColumnCount = structuredResult.ColumnCount,
-                            ColumnNames = structuredResult.ColumnNames,
-                            ExecutionMilliseconds = structuredResult.ExecutionMilliseconds,
-                            Succeeded = structuredResult.Succeeded,
-                            ErrorMessage = structuredResult.ErrorMessage,
-                            GitHubIssueUrl = audit.GitHubIssueUrl,
-                            AzDoWorkItemUrl = audit.AzDoWorkItemUrl
+                            SessionId = session.Id,
+                            Role = "tool",
+                            Content = toolResult,
+                            Timestamp = DateTimeOffset.UtcNow,
+                            ToolCallId = toolCall.ToolCallId,
+                            ToolName = toolCall.ToolName
                         };
-                        await queryHistoryStore.AddAsync(historyEntry);
+                        session = await chatHistoryStore.AddMessageAsync(session.Id, toolHistoryMsg);
 
-                        executedQueries.Add(new
+                        var toolResultEvent = JsonSerializer.Serialize(new
                         {
-                            historyId = historyEntry.Id,
-                            sql,
-                            rowCount = structuredResult.RowCount,
-                            executionTimeMs = structuredResult.ExecutionMilliseconds,
-                            auditUrl = audit.GitHubIssueUrl,
-                            result = new
-                            {
-                                resultSets = structuredResult.ResultSets.Select(rs => new
-                                {
-                                    columns = rs.ColumnNames.Select(n => new { name = n, type = "unknown" }),
-                                    rows = rs.Rows,
-                                    rowCount = rs.RowCount
-                                }).ToList(),
-                                executionTimeMs = structuredResult.ExecutionMilliseconds
-                            }
+                            type = "tool_result",
+                            tool = toolCall.ToolName,
+                            success = true
+                        });
+                        await context.Response.WriteAsync($"data: {toolResultEvent}\n\n", ct);
+                        await context.Response.Body.FlushAsync(ct);
+
+                        llmRequest.Messages.Add(new SqlAuditedQueryTool.Core.Models.Llm.ChatMessage
+                        {
+                            Role = "tool",
+                            Content = toolResult
                         });
                     }
-                    
-                    // Execute tool through LLM service (handles all tools including code context)
-                    var toolResult = await llmService.ExecuteToolCallAsync(toolCall, ct);
 
-                    // Save tool result to chat history
-                    var toolHistoryMsg = new ChatMessageHistory
-                    {
-                        Id = Guid.NewGuid(),
-                        SessionId = session.Id,
-                        Role = "tool",
-                        Content = toolResult,
-                        Timestamp = DateTimeOffset.UtcNow,
-                        ToolCallId = toolCall.ToolCallId,
-                        ToolName = toolCall.ToolName
-                    };
-                    session = await chatHistoryStore.AddMessageAsync(session.Id, toolHistoryMsg);
-
-                    // Send tool_result event
-                    var toolResultEvent = JsonSerializer.Serialize(new
-                    {
-                        type = "tool_result",
-                        tool = toolCall.ToolName,
-                        success = true
-                    });
-                    await context.Response.WriteAsync($"data: {toolResultEvent}\n\n", ct);
-                    await context.Response.Body.FlushAsync(ct);
-
-                    // Add tool result to messages and continue conversation
-                    llmRequest.Messages.Add(new SqlAuditedQueryTool.Core.Models.Llm.ChatMessage
-                    {
-                        Role = "tool",
-                        Content = toolResult
-                    });
+                    // Get next response — may contain more tool calls or text
+                    response = await llmService.ChatAsync(llmRequest, ct);
                 }
 
-                // Get next response from LLM
-                response = await llmService.ChatAsync(llmRequest, ct);
-            }
+                // After tool loop, stream the final text response
+                streamedText = await StreamResponseAsync();
 
-            // Phase 2: Stream the final text response with thinking support
-            // Use StreamChatAsync to deliver text incrementally via SSE events.
-            // After tool calls, this re-generates the response with full conversation context.
-            // Without tool calls, this is the primary (and only) response generation.
-            var fullTextBuilder = new StringBuilder();
-            await foreach (var chunk in llmService.StreamChatAsync(llmRequest, ct))
-            {
-                var eventType = chunk.IsThinking ? "thinking" : "text";
-                var sseEvent = JsonSerializer.Serialize(new
+                // If streaming still returned nothing, use ChatAsync text as fallback
+                if (string.IsNullOrEmpty(streamedText) && response.Text is { Length: > 0 })
                 {
-                    type = eventType,
-                    content = chunk.Content
-                });
-                await context.Response.WriteAsync($"data: {sseEvent}\n\n", ct);
-                await context.Response.Body.FlushAsync(ct);
-
-                if (!chunk.IsThinking)
-                    fullTextBuilder.Append(chunk.Content);
+                    streamedText = response.Text;
+                    var textEvent = JsonSerializer.Serialize(new { type = "text", content = streamedText });
+                    await context.Response.WriteAsync($"data: {textEvent}\n\n", ct);
+                    await context.Response.Body.FlushAsync(ct);
+                }
             }
 
-            var streamedText = fullTextBuilder.ToString();
-
-            // Build response from streamed text for history/validation
+            // Build response for history/validation
             response = new LlmResponse
             {
                 Text = streamedText,
